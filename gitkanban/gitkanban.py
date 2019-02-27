@@ -4,10 +4,10 @@ import json
 from github import Github, GithubException
 
 from basescript import BaseScript
-from .exceptions import InvalidFileTypeException
+from .exceptions import InvalidFileTypeException, GithubServerException
 
 class GitKanban(BaseScript):
-    DESC = ""
+    DESC = "A tool to enhance Github issue management with Kanban flow"
 
     def __init__(self, *args, **kwargs):
         super(GitKanban, self).__init__(*args, **kwargs)
@@ -65,8 +65,11 @@ class GitKanban(BaseScript):
                 try:
                     repo_name = "{}/{}".format(self.args.org, rn)
                     self.repo.append(self.git.get_repo(repo_name))
-                except GithubException:
-                    self.log.exception('invalid_repository_name', repo_name=repo_name)
+                except GithubException as e:
+                    if e.data['message'] == "Server Error":
+                        raise GithubServerException("Got Github Server Error Exception")
+                    if e.data['message'] == "Not Found":
+                        self.log.exception('invalid_repository_name', repo_name=repo_name)
                     sys.exit(1)
 
         # check repo present in user/org
@@ -78,8 +81,11 @@ class GitKanban(BaseScript):
                         self.repo.append(self.git.get_repo(rn))
                     else:
                         self.repo.append(self.git.get_user().get_repo(rn))
-            except GithubException:
-                self.log.exception('invalid_repository_name', repo_name=rn)
+            except GithubException as e:
+                if e.data['message'] == "Server Error":
+                    raise GithubServerException("Got Github Server Error Exception")
+                if e.data['message'] == "Not Found":
+                    self.log.exception('invalid_repository_name', repo_name=rn)
                 sys.exit(1)
 
         if self.args.org and not self.args.repo:
@@ -114,7 +120,9 @@ class GitKanban(BaseScript):
                             label_edited_count += 1
                             try:
                                 rep.get_label(aka).edit(k, color)
-                            except GithubException:
+                            except GithubException as e:
+                                if e.data['message'] == "Server Error":
+                                    raise GithubServerException("Got Github Server Error Exception")
                                 aka_label = rep.get_label(aka)
                                 aka_label_issues = rep.get_issues(labels=[aka_label])
                                 for ali in aka_label_issues:
@@ -129,7 +137,9 @@ class GitKanban(BaseScript):
                         else:
                             rep.create_label(label_name, color)
                         label_new_count += 1
-                    except GithubException:
+                    except GithubException as e:
+                        if e.data['message'] == "Server Error":
+                            raise GithubServerException("Got Github Server Error Exception")
                         label_exist_count += 1
 
             self.log.info("successfully_created_labels", type="metric",
