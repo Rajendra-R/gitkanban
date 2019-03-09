@@ -20,6 +20,7 @@ from .exceptions import InvalidFileTypeException, GithubAPIException, NoDataFoun
 TIMESTAMP_NOW = lambda : datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 ISSUE_URL = 'https://api.github.com/repos/{}/issues'
 LRU_CACHE_SIZE = 1000
+PEOPLES_BLACKLIST = ["deepcompute-agent", "deep-compute-ops"]
 
 class GitKanban(BaseScript):
     DESC = "A tool to enhance Github issue management with Kanban flow"
@@ -193,12 +194,14 @@ class GitKanban(BaseScript):
         # if issue has "next", "bug-type" labels
         # if that repo is present in our repo_group
         # -> ["queue:next", "label:bug-type", "repo:gitchecking/third", "repo_group:group1"]
+        issue_labels = [l['name'] for l in issue['labels']]
+        issue_assignees = [a['login'] for a in issue['assignees']]
         check_issue_index = []
-        for l in issue['labels']:
-            if l['name'] in queues_list:
-                key = "queue:{}".format(l['name'])
+        for l in issue_labels:
+            if l in queues_list:
+                key = "queue:{}".format(l)
             else:
-                key = "label:{}".format(l['name'])
+                key = "label:{}".format(l)
             check_issue_index.append(key)
 
         check_issue_index.append("repo:{}".format(repo_name))
@@ -226,14 +229,22 @@ class GitKanban(BaseScript):
         # get the selected people from the config ownership based on issue
         ownership_people = {}
         for op in final_ownership_list:
+            # check repo_group specific config
+            if "repo_group" in op.keys():
+                for r in repo_groups[op["repo_group"]]:
+                    if repo_name == r['repo']:
+                        label = r.get('label', '')
+                        assignee = r.get('assignee', '')
+                        if label and assignee:
+                            if not label in issue_labels or not assignee in issue_assignees:
+                                return
             #TODO: if we miss order the keys in the config file
             key = '-'.join([k.replace('_', '-') for k in op.keys() if not k == 'people'])
             ownership_people[key] = op['people']
 
         # add assignees of a issue
-        assignees = [a['login'] for a in issue['assignees']]
-        if assignees:
-            ownership_people['assignees'] = assignees
+        if issue_assignees:
+            ownership_people['assignees'] = issue_assignees
 
         # get the people based on our ownership hierarchy
         people = []
@@ -243,7 +254,7 @@ class GitKanban(BaseScript):
                 break
 
         if not people:
-            people.extend(ownership_list[-1]['system_owner'])
+            people.extend(self.system_owners)
 
         return people
 
@@ -410,6 +421,7 @@ class GitKanban(BaseScript):
         # d = [{'a': 'a1', 'b': 'b1', 'c': 'c1'}, {'a': 'a1', 'd': 'd1'}, {'b': 'b1'}, {'e': 'e1'}]
         # {'a:a1': {0, 1}, 'b:b1': {0, 2}, 'c:c1': {0}, 'd:d1': {1}, 'e:e1': {3}}
         ownership_list = self.config_json.get('ownership', [])
+        self.system_owners = next(o['system_owner'] for o in ownership_list if o.get('system_owner', []))
         ownership_index = {}
         for index, o in enumerate(ownership_list):
             for k, v in o.items():
@@ -428,6 +440,7 @@ class GitKanban(BaseScript):
         queues = self.config_json.get('queues', {})
         repo_groups = self.config_json.get('repo_groups', {})
         peoples = self.config_json.get('people', {})
+        dc_peoples_list = peoples.keys()
         # get all the repo's from the user specs
         final_repo_list = self.get_repo_list()
         for repo in final_repo_list:
@@ -482,13 +495,10 @@ class GitKanban(BaseScript):
                             # get peoples of the issue
                             peoples_list = self.get_people(repo_name, issue, ownership_index, queues, repo_groups, ownership_list)
                             for p in peoples_list:
-                                people = peoples.get(p, {})
-                                #FIXME: not required when we validate config file
-                                if not people:
-                                    # remove below line
-                                    people['name'] = p
-                                    #self.log.exception("missed person info in the config file", p_name=p)
+                                if p in PEOPLES_BLACKLIST or not p in dc_peoples_list:
+                                    continue
 
+                                people = peoples[p]
                                 # remove below two lines
                                 people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
                                 people['location'] = self.config_json.get('defaults', {})['location']
