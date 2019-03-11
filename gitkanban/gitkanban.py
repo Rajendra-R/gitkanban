@@ -10,7 +10,6 @@ from pytz import timezone
 from dateutil import parser
 from dateutil.relativedelta import relativedelta
 
-#from alertaclient.api import Client
 from pylru import lrucache
 from github import Github, GithubException
 
@@ -55,8 +54,6 @@ class GitKanban(BaseScript):
         if self.args.config_file:
             with open(self.args.config_file) as f:
                 self.config_json = json.loads(f.read())
-
-        #self.alerta_client = Client('http://127.0.0.1:5000')
 
         self.lru = lrucache(LRU_CACHE_SIZE)
 
@@ -512,7 +509,6 @@ class GitKanban(BaseScript):
                                         tmp_check_list[issue_url] = True
                                     else:
                                         tmp_check_list[issue_url] = False
-                                    #import pdb;pdb.set_trace()
                                     self.log.info("got_alert", priority=co['priority'],
                                         issue_no=issue['number'], issue_url=issue['url'],
                                         queue=co['queue'], constraint_name=co['name'], person_name=p,
@@ -533,8 +529,6 @@ class GitKanban(BaseScript):
         for rg_name, rg_list in repo_groups.items():
             existing_labels = []
             for r in rg_list:
-                if 'label' in r.keys():
-                    continue
                 repo_name = r['repo']
                 try:
                     repo = self.git.get_repo(repo_name)
@@ -558,7 +552,7 @@ class GitKanban(BaseScript):
                 for i in repo.get_issues():
                         i.add_to_labels(rg_label_name)
 
-            self.log.info('completed_adding_team_label', repo_name=r, repo_group=rg_name)
+                self.log.info('completed_adding_team_label', repo_name=repo_name, repo_group=rg_name)
 
 
 
