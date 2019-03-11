@@ -10,6 +10,7 @@ from pytz import timezone
 from dateutil import parser
 from dateutil.relativedelta import relativedelta
 
+#from alertaclient.api import Client
 from pylru import lrucache
 from github import Github, GithubException
 
@@ -22,31 +23,40 @@ ISSUE_URL = 'https://api.github.com/repos/{}/issues'
 LRU_CACHE_SIZE = 1000
 PEOPLES_BLACKLIST = ["deepcompute-agent", "deep-compute-ops"]
 
+OWNERSHIP_HIERARCHY = [
+    "assignees",
+    "repo-queue-label",
+    "repo-queue",
+    "repo-label",
+    "repo",
+    "repo-group-queue-label",
+    "repo-group-queue",
+    "repo-group-label",
+    "repo-group",
+    "system-owner"
+]
+
 class GitKanban(BaseScript):
     DESC = "A tool to enhance Github issue management with Kanban flow"
 
     def __init__(self, *args, **kwargs):
         super(GitKanban, self).__init__(*args, **kwargs)
 
-        self.ownership_hierarchy = [
-        "assignees",
-        "repo-queue-label",
-        "repo-queue",
-        "repo-label",
-        "repo",
-        "repo-group-queue-label",
-        "repo-group-queue",
-        "repo-group-label",
-        "repo-group",
-        "system-owner"
-        ]
-
         if self.args.github_access_token:
             self.git = Github(self.args.github_access_token)
         else:
             self.git = Github(self.args.username, self.args.password)
 
-        self.constraints = ConstraintsStateDB(self.args.db_dir)
+        self.constraints = ConstraintsStateDB(self.args.db)
+
+        #TODO: Before validate the config file, fill with default values, with all keys
+        #TODO: validate the config file
+        # read conf file
+        if self.args.config_file:
+            with open(self.args.config_file) as f:
+                self.config_json = json.loads(f.read())
+
+        #self.alerta_client = Client('http://127.0.0.1:5000')
 
         self.lru = lrucache(LRU_CACHE_SIZE)
 
@@ -61,22 +71,22 @@ class GitKanban(BaseScript):
             help='create or modify the labels'
         )
         ensure_labels_cmd.set_defaults(func=self.ensure_labels)
-        ensure_labels_cmd.add_argument("--config-file", required=True, type=self.check_file_type,
-            help="github label configuration file"
-        )
 
         # check_constraints arguments
         check_constraints_cmd = subcommands.add_parser('check-constraints',
             help="check the label constraints"
         )
         check_constraints_cmd.set_defaults(func=self.check_constraints)
-        check_constraints_cmd.add_argument("--config-file", required=True, type=self.check_file_type,
-            help="check the issue constraints"
+
+        # ensure_repo_group_labels arguments
+        ensure_repo_group_labels = subcommands.add_parser('ensure_repo_group_labels',
+            help="create the repo_group labels to the repo in that group"
         )
+        ensure_repo_group_labels.set_defaults(func=self.ensure_repo_group_labels)
 
     def check_file_type(self, path):
-        if not path.endswith('.conf'):
-            raise InvalidFileTypeException("prefered .conf extension")
+        if not path.endswith('.json'):
+            raise InvalidFileTypeException("prefered .json extension")
         return path
 
     def get_repo_list(self):
@@ -102,8 +112,10 @@ class GitKanban(BaseScript):
                 except GithubException as e:
                     if e.data['message'] == "Server Error":
                         raise GithubAPIException("Got Github Server Error Exception")
-                    if e.data['message'] == "Not Found":
+                    elif e.data['message'] == "Not Found":
                         self.log.exception('invalid_repository_name', repo_name=repo_name)
+                    elif 'API rate limit exceeded for user ID' in e.data['message']:
+                        self.log.exception('api_rate_limit_exceeded', repo_name=repo_name)
                     sys.exit(1)
 
         # check repo present in user/org
@@ -118,8 +130,10 @@ class GitKanban(BaseScript):
             except GithubException as e:
                 if e.data['message'] == "Server Error":
                     raise GithubAPIException("Got Github Server Error Exception")
-                if e.data['message'] == "Not Found":
+                elif e.data['message'] == "Not Found":
                     self.log.exception('invalid_repository_name', repo_name=rn)
+                elif 'API rate limit exceeded for user ID' in e.data['message']:
+                    self.log.exception('api_rate_limit_exceeded', repo_name=rn)
                 sys.exit(1)
 
         if self.args.org and not self.args.repo:
@@ -130,11 +144,6 @@ class GitKanban(BaseScript):
 
     def ensure_labels(self):
         final_repo_list = self.get_repo_list()
-
-        # read lable.conf file
-        if self.args.config_file:
-            with open(self.args.config_file) as f:
-                self.config_json = json.loads(f.read())
 
         # create/update/delete label inside repo
         for rep in final_repo_list:
@@ -248,7 +257,7 @@ class GitKanban(BaseScript):
 
         # get the people based on our ownership hierarchy
         people = []
-        for oh in self.ownership_hierarchy:
+        for oh in OWNERSHIP_HIERARCHY:
             if oh in ownership_people.keys():
                 people = ownership_people[oh]
                 break
@@ -410,13 +419,6 @@ class GitKanban(BaseScript):
         return False
 
     def check_constraints(self):
-        #TODO: Before validate the config file, fill with default values, with all keys
-        #TODO: validate the config file
-        # read lable.conf file
-        if self.args.config_file:
-            with open(self.args.config_file) as f:
-                self.config_json = json.loads(f.read())
-
         # prepare owndership index from the given config file
         # d = [{'a': 'a1', 'b': 'b1', 'c': 'c1'}, {'a': 'a1', 'd': 'd1'}, {'b': 'b1'}, {'e': 'e1'}]
         # {'a:a1': {0, 1}, 'b:b1': {0, 2}, 'c:c1': {0}, 'd:d1': {1}, 'e:e1': {3}}
@@ -499,15 +501,18 @@ class GitKanban(BaseScript):
                                     continue
 
                                 people = peoples[p]
-                                # remove below two lines
-                                people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
-                                people['location'] = self.config_json.get('defaults', {})['location']
+                                #TODO: remove below two if cond
+                                if not people.get('work_hours', {}):
+                                    people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
+                                if not people.get('location', ''):
+                                    people['location'] = self.config_json.get('defaults', {})['location']
                                 # check the constraint is pass/not
                                 if self.check_constraint(co, issue, people):
                                     if co_continue:
                                         tmp_check_list[issue_url] = True
                                     else:
                                         tmp_check_list[issue_url] = False
+                                    #import pdb;pdb.set_trace()
                                     self.log.info("got_alert", priority=co['priority'],
                                         issue_no=issue['number'], issue_url=issue['url'],
                                         queue=co['queue'], constraint_name=co['name'], person_name=p,
@@ -520,6 +525,41 @@ class GitKanban(BaseScript):
                             break
                         else:
                             req_url = next_page['url']
+
+    def ensure_repo_group_labels(self):
+        repo_groups = self.config_json.get('repo_groups', {})
+        repo_group_labels = self.config_json.get('repo_group_labels', {})
+
+        for rg_name, rg_list in repo_groups.items():
+            existing_labels = []
+            for r in rg_list:
+                if 'label' in r.keys():
+                    continue
+                repo_name = r['repo']
+                try:
+                    repo = self.git.get_repo(repo_name)
+                except GithubException as e:
+                    if e.data['message'] == "Server Error":
+                        raise GithubAPIException("Got Github ServerError Exception")
+                    elif e.data['message'] == "Not Found":
+                        self.log.exception('invalid_repository_name', repo_name=repo_name)
+                    elif 'API rate limit exceeded for user ID' in e.data['message']:
+                        self.log.exception('api_rate_limit_exceeded', repo_name=repo_name)
+                    sys.exit(1)
+
+                existing_labels = [i.name for i in repo.get_labels()]
+                rg_label = repo_group_labels.get(rg_name, {})
+                if not rg_label:
+                    continue
+                rg_label_name = rg_label['name']
+                if not rg_label_name in existing_labels:
+                    repo.create_label(rg_label_name, rg_label['color'], rg_label['description'])
+
+                for i in repo.get_issues():
+                        i.add_to_labels(rg_label_name)
+
+            self.log.info('completed_adding_team_label', repo_name=r, repo_group=rg_name)
+
 
 
     def define_baseargs(self, parser):
@@ -540,9 +580,12 @@ class GitKanban(BaseScript):
         parser.add_argument('-r', '--repo', type=str,
             help="github repository name"
         )
-        parser.add_argument("--db-dir",
+        parser.add_argument("--db",
             default=os.path.join(os.getcwd(), "constraints.db"),
             help="dir for sessions db info",
+        )
+        parser.add_argument("--config-file", required=True, type=self.check_file_type,
+            help="check the config file"
         )
 
 def main():
