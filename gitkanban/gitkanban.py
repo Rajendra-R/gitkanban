@@ -76,10 +76,54 @@ class GitKanban(BaseScript):
         check_constraints_cmd.set_defaults(func=self.check_constraints)
 
         # ensure_repo_group_labels arguments
-        ensure_repo_group_labels = subcommands.add_parser('ensure_repo_group_labels',
+        ensure_repo_group_labels = subcommands.add_parser('ensure-repo-group-labels',
             help="create the repo_group labels to the repo in that group"
         )
         ensure_repo_group_labels.set_defaults(func=self.ensure_repo_group_labels)
+
+        # send_to_pagerduty arguments
+        send_to_pagerduty = subcommands.add_parser('send-to-pagerduty',
+            help="send alerts to pagerduty"
+        )
+        send_to_pagerduty.set_defaults(func=self.send_to_pagerduty)
+        send_to_pagerduty.add_argument('-s', '--service-key', default=[], type=str, action='append',
+            help='To pass parameters ex: service1=c6b32f012ec, service2=d6b344f012ec'
+        )
+
+    def send_to_pagerduty(self):
+        serivce_key = {}
+        for i in self.args.service_key:
+            k, v = i.split('=')
+            serivce_key.setdefault(k, v)
+
+        for data in sys.stdin:
+            try:
+                alert_msg = json.loads(data)
+            except ValueError:
+                print(alert_msg)
+                self.log.error('got_bad_data', msg=alert_msg)
+                continue
+
+            # send alert to pagerduty
+            pagerduty_service_key = serivce_key.get(alert_msg['repo_group_name'], None)
+            msg = "{}-{}".format(alert_msg['issue_no'], alert_msg['issue_title'])
+            data = {
+                "routing_key": pagerduty_service_key,
+                "event_action": "trigger",
+                "payload": {
+                    "summary": msg,
+                    "source": alert_msg['queue_name'],
+                    "severity": "warning",
+                    "group": alert_msg['constraint_name'],
+                    "custom_details": alert_msg
+                }
+            }
+            r = requests.post('https://events.pagerduty.com/v2/enqueue', data=json.dumps(data))
+            if r.json().get('status') == 'success':
+                self.log.info('successfully_inserted_alert_to_pagerduty')
+            else:
+                self.log.error('somethig_bad_happend', problem=r.content)
+
 
     def check_file_type(self, path):
         if not path.endswith('.json'):
@@ -234,11 +278,13 @@ class GitKanban(BaseScript):
 
         # get the selected people from the config ownership based on issue
         ownership_people = {}
+        self.repo_group_name = None
         for op in final_ownership_list:
             # check repo_group specific config
             if "repo_group" in op.keys():
                 for r in repo_groups[op["repo_group"]]:
                     if repo_name == r['repo']:
+                        self.repo_group_name = op["repo_group"]
                         label = r.get('label', '')
                         assignee = r.get('assignee', '')
                         if label and assignee:
@@ -368,6 +414,9 @@ class GitKanban(BaseScript):
             c_hours = int(days) * 24
         elif 'h' in time_constraint:
             c_hours, _ = time_constraint.split('h')
+        else:
+            self.log.error('invalid_time_constraint', constraint_time=time_constraint)
+            return False
 
         diff_time = relativedelta(parser.parse(p_current_time_utc), parser.parse(issue_created_at))
         months = diff_time.months
@@ -509,12 +558,21 @@ class GitKanban(BaseScript):
                                         tmp_check_list[issue_url] = True
                                     else:
                                         tmp_check_list[issue_url] = False
-                                    self.log.info("got_alert", priority=co['priority'],
-                                        issue_no=issue['number'], issue_url=issue['url'],
-                                        queue=co['queue'], constraint_name=co['name'], person_name=p,
-                                        repo_name=repo_name, issue_title=issue['title'],
-                                        issue_creation_time=issue['created_at'],
-                                    )
+                                    alert_data = {
+                                        "priority": co['priority'],
+                                        "issue_no": issue['number'],
+                                        "issue_url": issue['url'],
+                                        "queue_name": co['queue'],
+                                        "constraint_name": co['name'],
+                                        "person_name": p,
+                                        "repo_name": repo_name,
+                                        "issue_title": issue['title'],
+                                        "issue_creation_time": issue['created_at'],
+                                        "repo_group_name": self.repo_group_name
+                                    }
+                                    sys.stdout.write(json.dumps(alert_data))
+                                    sys.stdout.write('\n')
+                                    self.log.info("got_alert", type='alert', **alert_data)
 
                         # req a pagination issue url
                         if not next_page:
@@ -552,7 +610,7 @@ class GitKanban(BaseScript):
                 for i in repo.get_issues():
                         i.add_to_labels(rg_label_name)
 
-                self.log.info('completed_adding_team_label', repo_name=repo_name, repo_group=rg_name)
+                self.log.info('completed_adding_team_label', repo_name=r, repo_group=rg_name)
 
 
 
@@ -572,13 +630,13 @@ class GitKanban(BaseScript):
             help="github organization name"
         )
         parser.add_argument('-r', '--repo', type=str,
-            help="github repository name"
+            help="github repository name EX: 'abc'(or)'deep/abc'(or)'deep/a,deep/b,deep/c'"
         )
         parser.add_argument("--db",
             default=os.path.join(os.getcwd(), "constraints.db"),
             help="dir for sessions db info",
         )
-        parser.add_argument("--config-file", required=True, type=self.check_file_type,
+        parser.add_argument("--config-file", type=self.check_file_type,
             help="check the config file"
         )
 
