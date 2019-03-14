@@ -105,25 +105,41 @@ class GitKanban(BaseScript):
                 continue
 
             # send alert to pagerduty
-            pagerduty_service_key = serivce_key.get(alert_msg['repo_group_name'], None)
-            msg = "{}-{}".format(alert_msg['issue_no'], alert_msg['issue_title'])
-            data = {
-                "routing_key": pagerduty_service_key,
-                "event_action": "trigger",
-                "payload": {
-                    "summary": msg,
-                    "source": alert_msg['queue_name'],
-                    "severity": "warning",
-                    "group": alert_msg['constraint_name'],
-                    "custom_details": alert_msg
+            #pagerduty_service_key = serivce_key.get(alert_msg['repo_group_name'], None)
+            pagerduty_service_key = '684603aa1e0a465bbf9d68c7920bbd97'
+
+            id = "{}-{}".format(alert_msg['constraint_name'], alert_msg['issue_url'])
+            dedup_key = hashlib.md5(id.encode('utf8')).hexdigest()
+            alert_status = alert_msg['alert_status']
+            co_info = alert_msg.pop('co_info', {})
+
+            record = self.constraints.get_failed_check_alert(id=id)
+            if record:
+                data = json.loads(record['alert_data'])
+                data['event_action'] = alert_status
+            else:
+                msg = "{}-{}".format(alert_msg['issue_no'], alert_msg['issue_title'])
+                data = {
+                    "routing_key": pagerduty_service_key,
+                    "event_action": alert_status,
+                    "dedup_key": dedup_key,
+                    "payload": {
+                        "summary": msg,
+                        "source": alert_msg['queue_name'],
+                        "severity": "warning",
+                        "group": alert_msg['constraint_name'],
+                        "custom_details": alert_msg
+                    }
                 }
-            }
             r = requests.post('https://events.pagerduty.com/v2/enqueue', data=json.dumps(data))
-            if r.json().get('status') == 'success':
+            r_data = r.json()
+            if r_data.get('status') == 'success':
+                self.constraints.insert_failed_check_alert(id, TIMESTAMP_NOW(), json.dumps(co_info),
+                    alert_msg['issue_url'], json.dumps(alert_msg), alert_status
+                )
                 self.log.info('successfully_inserted_alert_to_pagerduty')
             else:
-                self.log.error('somethig_bad_happend', problem=r.content)
-
+                self.log.error('record_not_inserted_to_pagerduty', problem=r.content)
 
     def check_file_type(self, path):
         if not path.endswith('.json'):
@@ -238,8 +254,7 @@ class GitKanban(BaseScript):
                 label_edited=label_edited_count,
             )
 
-    def get_people(self, repo_name, issue, ownership_index, queues, repo_groups, ownership_list):
-        queues_list = queues.values()
+    def get_people(self, repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list):
         # prepare label separation for each issue
         # if issue has "next", "bug-type" labels
         # if that repo is present in our repo_group
@@ -294,9 +309,10 @@ class GitKanban(BaseScript):
             key = '-'.join([k.replace('_', '-') for k in op.keys() if not k == 'people'])
             ownership_people[key] = op['people']
 
+        #import pdb;pdb.set_trace()
         # add assignees of a issue
-        if issue_assignees:
-            ownership_people['assignees'] = issue_assignees
+        #if issue_assignees:
+        #    ownership_people['assignees'] = issue_assignees
 
         # get the people based on our ownership hierarchy
         people = []
@@ -351,8 +367,12 @@ class GitKanban(BaseScript):
         data = resp_obj.json()
 
         if isinstance(data, dict):
-            if data['message'] == 'Not Found':
+            if data.get('message', '') == 'Not Found':
                 raise NoDataFoundException
+            elif data.get('message', '') == "Server Error":
+                raise GithubAPIException("Got Github Server Error Exception")
+
+            data = [data]
 
         self.lru[_id] = (resp_obj, data)
         return (resp_obj, data)
@@ -422,6 +442,7 @@ class GitKanban(BaseScript):
         months = diff_time.months
         days = diff_time.days
         hours = diff_time.hours
+        minutes = diff_time.minutes
         #TODO: check year, months having 31, holidays, leapyear,..
         total_hours = int(((months * 30) * 24) + (days * 24) + hours)
         if total_hours > int(c_hours):
@@ -486,6 +507,7 @@ class GitKanban(BaseScript):
 
         checks = self.config_json.get('checks', [])
         queues = self.config_json.get('queues', {})
+        queues_list = queues.values()
         repo_groups = self.config_json.get('repo_groups', {})
         peoples = self.config_json.get('people', {})
         dc_peoples_list = peoples.keys()
@@ -496,69 +518,71 @@ class GitKanban(BaseScript):
             for ch in checks:
                 tmp_check_list = {}
                 tmp_nxt_check_list = []
+                #import pdb;pdb.set_trace()
+                #TODO: implement flag
                 for co in ch:
-                    co_queue_name = co.get('queue', '')
-                    actual_q_name = queues[co_queue_name]
-                    if not actual_q_name:
-                        params = {} # for inbox case
-                    else:
-                        params = {"labels": actual_q_name}
+                    def __check_constraints(self, co, check_alert_issues=False, issue_url=None):
+                        co_queue_name = co.get('queue', '')
+                        actual_q_name = queues[co_queue_name]
+                        if not actual_q_name:
+                            params = {} # for inbox case
+                        else:
+                            params = {"labels": actual_q_name}
 
-                    params['per_page'] = 100
-                    # req a repo url to get the issues, default will get only open issues
-                    #TODO: check if there are issues pagination
-                    req_url = ISSUE_URL.format(repo_name)
-                    # req a issue url with pagination
-                    while True:
-                        resp_obj, issues_list = self.make_request(req_url, params=params)
-                        next_page = resp_obj.links.get('next', {})
+                        params['per_page'] = 100
+                        if not check_alert_issues:
+                            # req a repo url to get the issues, default will get only open issues
+                            req_url = ISSUE_URL.format(repo_name)
+                        else:
+                            req_url = issue_url
+                        # req a issue url with pagination
+                        while True:
+                            resp_obj, issues_list = self.make_request(req_url, params=params)
+                            next_page = resp_obj.links.get('next', {})
 
-                        if co_queue_name == "inbox":
-                            issues_list = [i for i in issues_list if not i['labels']]
+                            if co_queue_name == "inbox":
+                                issues_list = [i for i in issues_list if not any (ln in queues_list for ln in [l['name'] for l in i['labels'] if l['name']])]
 
-                        for issue in issues_list:
-                            issue_url = issue['url']
-                            # skip the issues which are passed in the before constraint of first run
-                            if issue_url in tmp_check_list.keys():
-                                if not tmp_check_list[issue_url]:
+                            for issue in issues_list:
+                                issue_url = issue['url']
+
+                                # skip the issues which are passed in the before constraint of first run
+                                if issue_url in tmp_check_list.keys():
+                                    if not tmp_check_list[issue_url]:
+                                        continue
+
+                                if issue_url in tmp_nxt_check_list:
                                     continue
 
-                            if issue_url in tmp_nxt_check_list:
-                                continue
+                                if not check_alert_issues:
+                                    # check last executed from sqlite
+                                    co_name = co['name']
+                                    co_feruency = co['frequency']
+                                    co_continue = co['continue']
+                                    check_co_id = "{}:{}".format(co_name, issue_url)
+                                    last_executed_record = self.constraints.get_constraint(check_co_id)
+                                    if not last_executed_record:
+                                        co_con = 1 if co_continue else 0
+                                        self.constraints.new_constraint(check_co_id, TIMESTAMP_NOW(), co_con)
+                                    elif not self.check_last_constraint_executed(co, last_executed_record):
+                                        if not last_executed_record['co_continue']:
+                                            tmp_nxt_check_list.append(issue_url)
+                                        continue
 
-                            # check last executed from sqlite
-                            co_name = co['name']
-                            co_feruency = co['frequency']
-                            co_continue = co['continue']
-                            check_co_id = "{}:{}".format(co_name, issue_url)
-                            last_executed_record = self.constraints.get_constraint(check_co_id)
-                            if not last_executed_record:
-                                co_con = 1 if co_continue else 0
-                                self.constraints.new_constraint(check_co_id, TIMESTAMP_NOW(), co_con)
-                            elif not self.check_last_constraint_executed(co, last_executed_record):
-                                if not last_executed_record['co_continue']:
-                                    tmp_nxt_check_list.append(issue_url)
-                                continue
+                                # get peoples of the issue
+                                peoples_list = self.get_people(repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list)
+                                for p in peoples_list:
+                                    if p in PEOPLES_BLACKLIST or not p in dc_peoples_list:
+                                        continue
 
-                            # get peoples of the issue
-                            peoples_list = self.get_people(repo_name, issue, ownership_index, queues, repo_groups, ownership_list)
-                            for p in peoples_list:
-                                if p in PEOPLES_BLACKLIST or not p in dc_peoples_list:
-                                    continue
+                                    people = peoples[p]
+                                    #TODO: remove below two if cond
+                                    if not people.get('work_hours', {}):
+                                        people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
+                                    if not people.get('location', ''):
+                                        people['location'] = self.config_json.get('defaults', {})['location']
 
-                                people = peoples[p]
-                                #TODO: remove below two if cond
-                                if not people.get('work_hours', {}):
-                                    people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
-                                if not people.get('location', ''):
-                                    people['location'] = self.config_json.get('defaults', {})['location']
-                                # check the constraint is pass/not
-                                if self.check_constraint(co, issue, people):
-                                    if co_continue:
-                                        tmp_check_list[issue_url] = True
-                                    else:
-                                        tmp_check_list[issue_url] = False
-                                    alert_data = {
+                                    self.alert_data = {
                                         "priority": co['priority'],
                                         "issue_no": issue['number'],
                                         "issue_url": issue['url'],
@@ -568,17 +592,49 @@ class GitKanban(BaseScript):
                                         "repo_name": repo_name,
                                         "issue_title": issue['title'],
                                         "issue_creation_time": issue['created_at'],
-                                        "repo_group_name": self.repo_group_name
+                                        "repo_group_name": self.repo_group_name,
+                                        "co_info": co
                                     }
-                                    sys.stdout.write(json.dumps(alert_data))
-                                    sys.stdout.write('\n')
-                                    self.log.info("got_alert", type='alert', **alert_data)
 
-                        # req a pagination issue url
-                        if not next_page:
-                            break
-                        else:
-                            req_url = next_page['url']
+                                    # check the constraint is pass/not
+                                    if self.check_constraint(co, issue, people):
+                                        if co['continue']:
+                                            tmp_check_list[issue_url] = True
+                                        else:
+                                            tmp_check_list[issue_url] = False
+
+                                        self.issue_alert_resolve_flag = True
+
+                                        if not check_alert_issues:
+                                            self.alert_data['alert_status'] = 'trigger'
+                                            sys.stdout.write(json.dumps(self.alert_data))
+                                            sys.stdout.write('\n')
+                                            self.log.info("got_alert", type='alert', **self.alert_data)
+
+                            # req a pagination issue url
+                            if not next_page:
+                                break
+                            else:
+                                req_url = next_page['url']
+
+                __check_constraints(self, co)
+
+        #re-check the trigger issues
+        trigger_issues = self.constraints.get_failed_check_alert(alert_status='trigger')
+        if trigger_issues:
+            for ti in trigger_issues:
+                cons_info = json.loads(ti['cons_info'])
+                #TODO: send flag
+                tmp_check_list = {}
+                tmp_nxt_check_list = []
+                self.issue_alert_resolve_flag = False
+                __check_constraints(self, cons_info, check_alert_issues=True, issue_url=ca['issue_url'])
+                if not self.issue_alert_resolve_flag:
+                    self.alert_data['alert_status'] = 'resolve'
+                    self.alert_data['gitkanban_auto_resolve'] = True
+                    sys.stdout.write(json.dumps(self.alert_data))
+                    sys.stdout.write('\n')
+                    self.log.info("got_alert", type='alert', **self.alert_data)
 
     def ensure_repo_group_labels(self):
         repo_groups = self.config_json.get('repo_groups', {})
