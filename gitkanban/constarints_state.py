@@ -5,70 +5,52 @@ class ConstraintsStateDB(object):
 
     def __init__(self, db_path):
 
-        if not os.path.exists(db_path):
-            os.makedirs(db_path)
-
-        self.cfc_table_name = 'constraints_freq_check'
-
-        self.conn = sqlite3.connect(os.path.join(db_path, 'constraints.db'))
+        self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row
         self.cursor = self.conn.cursor()
-
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS {} (
-                id text PRIMARY KEY NOT NULL UNIQUE,
-                last_dt_executed text NOT NULL,
-                co_continue numeric NOT NULL
-            )'''.format(self.cfc_table_name)
-        )
 
         self.failed_checks_table_name = 'failed_checks'
 
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS {} (
-                id text PRIMARY KEY NOT NULL UNIQUE,
-                datetime text NOT NULL,
-                cons_info text NOT NULL,
+                constraint_name text NOT NULL,
+                person text NOT NULL,
                 issue_url text NOT NULL,
-                alert_data text NOT NULL,
-                alert_status text NOT NULL
-            )'''.format(self.failed_checks_table_name)
-        )
+                datetime text NOT NULL,
+                alert_issue_id numeric NOT NULL,
+                PRIMARY KEY (issue_url, person, constraint_name)
+            )'''.format(self.failed_checks_table_name))
 
-    def new_constraint(self, id, last_dt_executed, co_continue):
-        self.cursor.execute('''
-            INSERT OR REPLACE INTO {} values (?, ?, ?)'''.format(self.cfc_table_name),
-            (id, last_dt_executed, co_continue)
-        )
         self.conn.commit()
 
-    def get_constraint(self, id):
-        self.cursor.execute("SELECT * from {} where id='{}'".format(self.cfc_table_name, id))
-        records = [ i for i in self.cursor.fetchall() ]
-        if records:
-            row = records[0]
-            return dict(zip(row.keys(), row))
-
-    def insert_failed_check_alert(self, id, datetime, cons_info, issue_url, alert_data, alert_status):
+    def insert_failed_check(self, constraint_name, person, issue_url, datetime, alert_issue_id):
         self.cursor.execute('''
-            INSERT OR REPLACE INTO {} values (?, ?, ?, ?, ?, ?)'''.format(self.failed_checks_table_name),
-            (id, datetime, cons_info, issue_url, alert_data, alert_status)
+            INSERT OR REPLACE INTO {} values (?, ?, ?, ?, ?)'''.format(self.failed_checks_table_name),
+            (constraint_name, person, issue_url, datetime, alert_issue_id)
         )
         self.conn.commit()
        
-    def get_failed_check_alert(self, id=None, alert_status=None):
-        if alert_status:
-            self.cursor.execute("SELECT * from {} where alert_status='{}'".format(self.failed_checks_table_name, alert_status))
-            records = [ i for i in self.cursor.fetchall() ]
-            if records:
-                return [dict(zip(i.keys(), i)) for i in records]
-        elif id:
-            self.cursor.execute("SELECT * from {} where id='{}'".format(self.failed_checks_table_name, id))
+    def get_failed_check(self, constraint_name=None, person=None, issue_url=None):
+        if constraint_name and person and issue_url:
+            self.cursor.execute("SELECT * from {} where constraint_name='{}' and issue_url='{}' and person='{}'".format(self.failed_checks_table_name, constraint_name, issue_url, person))
             records = [ i for i in self.cursor.fetchall() ]
             if records:
                 row = records[0]
                 return dict(zip(row.keys(), row))
+           
+        elif constraint_name and issue_url:
+            self.cursor.execute("SELECT * from {} where constraint_name='{}' and issue_url='{}'".format(self.failed_checks_table_name, constraint_name, issue_url))
+            records = [ i for i in self.cursor.fetchall() ]
+            if records:
+                row = records[0]
+                return dict(zip(row.keys(), row))
+        else:
+            self.cursor.execute("SELECT * from {}".format(self.failed_checks_table_name))
+            records = [ i for i in self.cursor.fetchall() ]
+            if records:
+                return [dict(zip(i.keys(), i)) for i in records]
 
-    def delete_failed_check_alert(self, id):
-        self.cursor.execute("DELETE FROM {} WHERE id='{}'".format(self.failed_checks_table_name, id))
+    def delete_failed_check(self, constraint_name, person, issue_url):
+        self.cursor.execute("DELETE FROM {} WHERE constraint_name='{}' and issue_url='{}' and person='{}'".format(self.failed_checks_table_name, constraint_name, issue_url, person))
+        self.conn.commit()
 

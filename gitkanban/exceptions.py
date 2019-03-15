@@ -9,6 +9,10 @@ class InvalidFileTypeException(GitkanbanException):
     """ when conf file extension is not expected """
     pass
 
+class InvalidDBTypeException(GitkanbanException):
+    """ when conf file extension is not expected """
+    pass
+
 class GithubAPIException(GitkanbanException):
     """when github server error occurs"""
     pass
