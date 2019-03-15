@@ -8,6 +8,10 @@ setup(
     install_requires=[
         "basescript==0.2.8",
         "PyGithub==1.43.5",
+        "python-dateutil==2.8.0",
+        "requests==2.18.4",
+        "pylru==1.1.0",
+        "json2html==1.2.1",
     ],
     author="deep-compute",
     author_email="contact@deepcompute.com",
