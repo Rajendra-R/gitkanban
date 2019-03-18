@@ -446,7 +446,6 @@ class GitKanban(BaseScript):
         months = diff_time.months
         days = diff_time.days
         hours = diff_time.hours
-        minutes = diff_time.minutes
         #TODO: check year, months having 31, holidays, leapyear,..
         total_hours = int(((months * 30) * 24) + (days * 24) + hours)
         if total_hours > int(c_hours):
