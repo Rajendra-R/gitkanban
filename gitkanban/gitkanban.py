@@ -646,7 +646,7 @@ class GitKanban(BaseScript):
                             else:
                                 req_url = next_page['url']
 
-                __check_constraints(self, co)
+                    __check_constraints(self, co)
 
         # phase-2 check constraints
         #re-check the trigger issues
