@@ -1,6 +1,8 @@
 import os
 import sqlite3
 
+TABLE_NAME = 'failed_checks'
+
 class ConstraintsStateDB(object):
 
     def __init__(self, db_path):
@@ -9,7 +11,7 @@ class ConstraintsStateDB(object):
         self.conn.row_factory = sqlite3.Row
         self.cursor = self.conn.cursor()
 
-        self.failed_checks_table_name = 'failed_checks'
+        self.failed_checks_table_name = TABLE_NAME
 
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS {} (
@@ -29,7 +31,7 @@ class ConstraintsStateDB(object):
             (constraint_name, person, issue_url, datetime, alert_issue_id)
         )
         self.conn.commit()
-       
+
     def get_failed_check(self, constraint_name=None, person=None, issue_url=None):
         if constraint_name and person and issue_url:
             self.cursor.execute("SELECT * from {} where constraint_name='{}' and issue_url='{}' and person='{}'".format(self.failed_checks_table_name, constraint_name, issue_url, person))
@@ -37,7 +39,7 @@ class ConstraintsStateDB(object):
             if records:
                 row = records[0]
                 return dict(zip(row.keys(), row))
-           
+
         elif constraint_name and issue_url:
             self.cursor.execute("SELECT * from {} where constraint_name='{}' and issue_url='{}'".format(self.failed_checks_table_name, constraint_name, issue_url))
             records = [ i for i in self.cursor.fetchall() ]

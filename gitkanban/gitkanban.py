@@ -36,6 +36,15 @@ OWNERSHIP_HIERARCHY = [
     "system-owner"
 ]
 
+MSG_TABLE_KEYS = {
+    "priority": "Priority",
+    "constraint_name": "Constraint",
+    "queue_name": "Queue",
+    "person_name": "Person",
+    "repo_name": "Repository",
+    "repo_group_name": "Repository Group"
+}
+
 class GitKanban(BaseScript):
     DESC = "A tool to enhance Github issue management with Kanban flow"
 
@@ -85,8 +94,12 @@ class GitKanban(BaseScript):
     def send_to_github_alert(self, alert_repo, alert_msg):
         # send alert to github
         try:
-            data = json2html.convert(json = alert_msg)
-            body = "### Read-Me:\nIssue-url - {}\n{}\n".format(alert_msg['issue_html_url'], data)
+            table_data = {}
+            for k, v in alert_msg.items():
+                if k in MSG_TABLE_KEYS.keys():
+                    table_data[MSG_TABLE_KEYS[k]] = v
+            data = json2html.convert(json = table_data)
+            body = "**Issue-title :** {}\n**Issue-url :** {}\n#### Additional-Details:\n{}\n".format(alert_msg['issue_title'], alert_msg['issue_html_url'], data)
             labels=[
                 '{}-priority'.format(alert_msg['priority']),
                 '{}-repo'.format(alert_msg['repo_name']),
@@ -97,12 +110,12 @@ class GitKanban(BaseScript):
                 labels.append('{}-repo-group'.format(alert_msg['repo_group_name']))
             #TODO: check it is making multiple github api calls?
             alert_issue = alert_repo.create_issue(
-                title="Gitkanban:{}-{}#{}".format(alert_msg['constraint_name'], alert_msg['repo_name'], alert_msg['issue_no']),
+                title="Gitkanban: {} failed for {}#{}".format(alert_msg['constraint_name'], alert_msg['repo_name'], alert_msg['issue_no']),
                 body=body,
                 assignees=[alert_msg['person_name']],
                 labels=labels
             )
-            # insert record to table
+            # insert record to failed check table
             self.constraints.insert_failed_check(
                 alert_msg['constraint_name'],
                 alert_msg['person_name'],
@@ -113,7 +126,9 @@ class GitKanban(BaseScript):
             self.log.info('successfully_inserted_alert_to_github')
         except GithubException as e:
             if e.data['message'] == "Validation Failed":
-                self.log.exception('got_error_while_inserting_alert', error=e.data['errors'])
+                self.log.exception('got_error_while_inserting_alert', issue_url=alert_msg['issue_html_url'], error=e.data['errors'])
+            else:
+                self.log.exception('github_api_call_failed_while_inserting_alert', error=e)
 
     def check_file_type(self, path):
         if not path.endswith('.json'):
@@ -140,41 +155,35 @@ class GitKanban(BaseScript):
                 self.log.exception('invalid_organization_name', org_name=args_org)
                 sys.exit(1)
 
-        if args_org and repo_list:
-            for rn in repo_list:
-                try:
+        try:
+            if args_org and repo_list:
+                for rn in repo_list:
                     repo_name = "{}/{}".format(args_org, rn)
                     final_repo_list.append(self.git.get_repo(repo_name))
-                except GithubException as e:
-                    if e.data['message'] == "Server Error":
-                        raise GithubAPIException("Got Github Server Error Exception")
-                    elif e.data['message'] == "Not Found":
-                        self.log.exception('invalid_repository_name', repo_name=repo_name)
-                    elif 'API rate limit exceeded for user ID' in e.data['message']:
-                        self.log.exception('api_rate_limit_exceeded', repo_name=repo_name)
-                    sys.exit(1)
 
-        # check repo present in user/org
-        if not args_org and repo_list:
-            try:
+            # check repo present in user/org
+            if not args_org and repo_list:
                 for rn in repo_list:
                     if '/' in rn:
                         self.git.get_repo(rn).name
                         final_repo_list.append(self.git.get_repo(rn))
                     else:
                         final_repo_list.append(self.git.get_user().get_repo(rn))
-            except GithubException as e:
-                if e.data['message'] == "Server Error":
-                    raise GithubAPIException("Got Github Server Error Exception")
-                elif e.data['message'] == "Not Found":
-                    self.log.exception('invalid_repository_name', repo_name=rn)
-                elif 'API rate limit exceeded for user ID' in e.data['message']:
-                    self.log.exception('api_rate_limit_exceeded', repo_name=rn)
-                sys.exit(1)
 
-        if args_org and not args_repo:
-            for r in self.git.get_organization(args_org).get_repos():
-                final_repo_list.append(r)
+            if args_org and not args_repo:
+                for r in self.git.get_organization(args_org).get_repos():
+                    final_repo_list.append(r)
+
+        except GithubException as e:
+            if e.data['message'] == "Server Error":
+                raise GithubAPIException("Got Github Server Error Exception")
+            elif e.data['message'] == "Not Found":
+                self.log.exception('invalid_repository_name', repo_name=rn)
+            elif 'API rate limit exceeded for user ID' in e.data['message']:
+                self.log.exception('api_rate_limit_exceeded', repo_name=rn)
+            elif e.data['message'] == "Validation Failed":
+                self.log.exception('got_validation_failed', error=e.data['errors'])
+            sys.exit(1)
 
         return final_repo_list
 
@@ -209,6 +218,7 @@ class GitKanban(BaseScript):
                                     raise GithubAPIException("Got Github Server Error Exception")
                                 aka_label = rep.get_label(aka)
                                 aka_label_issues = rep.get_issues(labels=[aka_label])
+                                #TODO: collect metrics
                                 for ali in aka_label_issues:
                                     ali.add_to_labels(k)
                                     ali.remove_from_labels(aka)
@@ -216,6 +226,9 @@ class GitKanban(BaseScript):
 
                 if not edit_flag:
                     try:
+                        if label_name in existing_labels:
+                            label_exist_count += 1
+                            continue
                         if desc:
                             rep.create_label(label_name, color, desc)
                         else:
@@ -224,6 +237,8 @@ class GitKanban(BaseScript):
                     except GithubException as e:
                         if e.data['message'] == "Server Error":
                             raise GithubAPIException("Got Github Server Error Exception")
+                        elif e.data['message'] == "Validation Failed":
+                            self.log.exception('got_validation_failed', error=e.data['errors'])
                         label_exist_count += 1
 
             self.log.info("successfully_created_labels", type="metric",
@@ -288,7 +303,6 @@ class GitKanban(BaseScript):
             key = '-'.join([k.replace('_', '-') for k in op.keys() if not k == 'people'])
             ownership_people[key] = op['people']
 
-        #import pdb;pdb.set_trace()
         # add assignees of a issue
         if issue_assignees:
             ownership_people['assignees'] = issue_assignees
@@ -340,10 +354,16 @@ class GitKanban(BaseScript):
         # check response form the cache.
         if already_requested:
             resp_obj, data = self.lru[_id]
+            self.log.info('get_response_from_cache', url=url, params=params)
             return (resp_obj, data)
 
-        resp_obj = requests.get(url, params=params)
-        data = resp_obj.json()
+        try:
+            resp_obj = requests.get(url, params=params)
+            data = resp_obj.json()
+            self.request_count += 1
+            self.log.info('successfully_reqested_a_url', url=url, params=params)
+        except Exception as e:
+            self.log.debug('not_able_to_request', url=url, error=e)
 
         if isinstance(data, dict):
             if data.get('message', '') == 'Not Found':
@@ -430,6 +450,9 @@ class GitKanban(BaseScript):
         return False
 
     def check_constraint(self, constraint, issue, people):
+        # issue already closed but when issue come from our failed table.
+        if issue['state'] == "closed":
+            return False
         # req a issue comments url to get the last comment info
         comments_url = issue['comments_url']
         params = {"per_page": 100}
@@ -438,15 +461,10 @@ class GitKanban(BaseScript):
         if last_page:
             com_res_obj, data = self.make_request(last_page, params)
 
-        if not data:
-            # when issue moved from inbox <-> ready/next/in-progress and vice versa without any comments.
-            if constraint['queue'] in ['inbox', 'next', 'ready', 'in-progress']:
-                issue_data = issue
-            else:
-                #TODO: handle this properly
-                return False
-        else:
+        if data:
             issue_data = data[-1]
+        else:
+            issue_data = issue
 
         issue_created_at = issue_data['created_at']
         issue_updated_at = issue_data['updated_at']
@@ -465,6 +483,7 @@ class GitKanban(BaseScript):
         # prepare owndership index from the given config file
         # d = [{'a': 'a1', 'b': 'b1', 'c': 'c1'}, {'a': 'a1', 'd': 'd1'}, {'b': 'b1'}, {'e': 'e1'}]
         # {'a:a1': {0, 1}, 'b:b1': {0, 2}, 'c:c1': {0}, 'd:d1': {1}, 'e:e1': {3}}
+        self.request_count = 0
         ownership_list = self.config_json.get('ownership', [])
         self.system_owners = next(o['system_owner'] for o in ownership_list if o.get('system_owner', []))
         ownership_index = {}
@@ -495,13 +514,12 @@ class GitKanban(BaseScript):
         alert_repo = self.get_repo_list(self.args.org, self.args.alert_repo)[0]
         final_repo_list = self.get_repo_list(self.args.org, self.args.repo)
         already_alert = []
+        # phase-1 Regular constraint check.
         for repo in final_repo_list:
             repo_name = repo.full_name
             for ch in checks:
                 tmp_check_list = {}
                 tmp_nxt_check_list = []
-                #import pdb;pdb.set_trace()
-                #TODO: implement flag
                 for co in ch:
                     def __check_constraints(self, co, p_name=None, check_alert_issues=False, issue_url=None):
                         if check_alert_issues:
@@ -538,6 +556,7 @@ class GitKanban(BaseScript):
                                 if issue_url in tmp_nxt_check_list:
                                     continue
 
+                                # phase-1 Regular constraint ran
                                 if not check_alert_issues:
                                     # check last executed from sqlite
                                     co_name = co['name']
@@ -602,12 +621,18 @@ class GitKanban(BaseScript):
                                             person=p, issue_url=issue_url
                                         )
                                         if record:
-                                            get_alert_issue = alert_repo.get_issue(number=record['alert_issue_id'])
-                                            get_alert_issue.create_comment(body="**Gitkanban:** Auto-Resolved")
-                                            get_alert_issue.edit(state='closed')
-                                            self.constraints.delete_failed_check(co['name'], p, issue_url)
-                                            alert_msg['alert_status'] = 'resolved'
-                                            self.log.info('successfully_closed_alert_to_github', **alert_msg)
+                                            try:
+                                                get_alert_issue = alert_repo.get_issue(number=record['alert_issue_id'])
+                                                get_alert_issue.create_comment(body="**Gitkanban:** Auto-Resolved")
+                                                get_alert_issue.edit(state='closed')
+                                                self.constraints.delete_failed_check(co['name'], p, issue_url)
+                                                alert_msg['alert_status'] = 'resolved'
+                                                self.log.info('successfully_closed_alert_to_github', **alert_msg)
+                                            except GithubException as e:
+                                                if e.data['message'] == "Validation Failed":
+                                                    self.log.exception('got_error_while_closing_alert', error=e.data['errors'])
+                                                else:
+                                                    self.log.exception('github_api_call_failed_while_closing_alert', error=e)
 
                             # req a pagination issue url
                             if not next_page:
@@ -617,6 +642,7 @@ class GitKanban(BaseScript):
 
                 __check_constraints(self, co)
 
+        # phase-2 check constraints
         #re-check the trigger issues
         trigger_issues = self.constraints.get_failed_check()
         if trigger_issues:
@@ -629,6 +655,8 @@ class GitKanban(BaseScript):
                 tmp_check_list = {}
                 tmp_nxt_check_list = []
                 __check_constraints(self, cons_name, p_name, check_alert_issues=True, issue_url=issue_url)
+
+        self.log.info('total_git_api_req_count', type='metric', count=self.request_count)
 
     def ensure_repo_group_labels(self):
         repo_groups = self.config_json.get('repo_groups', {})
@@ -682,7 +710,7 @@ class GitKanban(BaseScript):
         parser.add_argument('-r', '--repo', type=str,
             help="github repository name ex: 'abc'(or)'deep/abc'(or)'deep/a,deep/b,deep/c'"
         )
-        parser.add_argument('-ar', '--alert-repo', type=str,
+        parser.add_argument('-a', '--alert-repo', type=str,
             help="github alert repository name ex: 'alerts'",
         )
         parser.add_argument("--db", required=True, type=self.check_db_type,
