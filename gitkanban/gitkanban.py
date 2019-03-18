@@ -22,6 +22,7 @@ TIMESTAMP_NOW = lambda : datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"
 ISSUE_URL = 'https://api.github.com/repos/{}/issues'
 LRU_CACHE_SIZE = 1000
 PEOPLES_BLACKLIST = ["deepcompute-agent", "deep-compute-ops"]
+ALERT_BODY_MSG = "### Alert: {}\n**Issue-title :** {}\n**Issue-url :** {}\n#### Additional-Details:\n{}\n"
 
 OWNERSHIP_HIERARCHY = [
     "assignees",
@@ -99,7 +100,11 @@ class GitKanban(BaseScript):
                 if k in MSG_TABLE_KEYS.keys():
                     table_data[MSG_TABLE_KEYS[k]] = v
             data = json2html.convert(json = table_data)
-            body = "**Issue-title :** {}\n**Issue-url :** {}\n#### Additional-Details:\n{}\n".format(alert_msg['issue_title'], alert_msg['issue_html_url'], data)
+            body = ALERT_BODY_MSG.format(alert_msg['constraint_desc'],
+                alert_msg['issue_title'],
+                alert_msg['issue_html_url'],
+                data
+            )
             labels=[
                 '{}-priority'.format(alert_msg['priority']),
                 '{}-repo'.format(alert_msg['repo_name']),
@@ -593,6 +598,7 @@ class GitKanban(BaseScript):
                                         "issue_title": issue['title'],
                                         "constraint_name": co['name'],
                                         "queue_name": co['queue'],
+                                        "constraint_desc": co['description'],
                                         "person_name": p,
                                         "repo_name": repo_name,
                                         "issue_creation_time": issue['created_at'],
