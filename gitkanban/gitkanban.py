@@ -146,7 +146,6 @@ class GitKanban(BaseScript):
             get_alert_issue.edit(state='closed')
             self.constraints.delete_failed_check(
                 alert_msg['constraint_name'],
-                alert_msg['person_name'],
                 alert_msg['issue_url']
             )
             alert_msg['alert_status'] = 'resolved'
@@ -520,9 +519,9 @@ class GitKanban(BaseScript):
                 tmp_check_list = {}
                 tmp_nxt_check_list = []
                 for co in ch:
-                    def __check_constraints(self, co, check_alert_issues=False, issue_url=None):
+                    def __check_constraints(self, co=None, check_alert_issues=False, record=None):
                         if check_alert_issues:
-                            co = co_info[co]
+                            co = co_info[record['constraint_name']]
                         co_queue_name = co.get('queue', '')
                         actual_q_name = queues[co_queue_name]
                         # add params from config before going to request
@@ -541,7 +540,7 @@ class GitKanban(BaseScript):
                         params['per_page'] = 100
 
                         if check_alert_issues:
-                            req_url = issue_url
+                            req_url = record['issue_url']
                         else:
                             # req a repo url to get the issues, default will get only open issues
                             req_url = ISSUE_URL.format(repo_name)
@@ -564,6 +563,14 @@ class GitKanban(BaseScript):
 
                                 if issue_url in tmp_nxt_check_list:
                                     continue
+
+                                # if issue moved from one queue to other after alert
+                                # make a auto-resolve for the alerted issue
+                                if check_alert_issues:
+                                    if actual_q_name not in [l['name'] for l in issue['labels']]:
+                                        alert_msg = {"constraint_name": co['name'], "issue_url": issue_url}
+                                        self.close_alert_to_github(alert_repo, alert_msg, record)
+                                        continue
 
                                 # phase-1 Regular constraint ran
                                 if not check_alert_issues:
@@ -639,21 +646,21 @@ class GitKanban(BaseScript):
                             else:
                                 req_url = next_page['url']
 
-                    __check_constraints(self, co)
+                    __check_constraints(self, co=co)
 
         # phase-2 check constraints
         #re-check the trigger issues
-        trigger_issues = self.constraints.get_failed_check()
-        if trigger_issues:
-            for ti in trigger_issues:
-                cons_name = ti['constraint_name']
-                issue_url = ti['issue_url']
-                p_name = ti['person']
+        alerted_issues = self.constraints.get_failed_check()
+        if alerted_issues:
+            for record in alerted_issues:
+                cons_name = record['constraint_name']
+                issue_url = record['issue_url']
+                p_name = record['person']
                 if "{}:{}:{}".format(cons_name, p_name, issue_url) in already_alert:
                     continue
                 tmp_check_list = {}
                 tmp_nxt_check_list = []
-                __check_constraints(self, cons_name, check_alert_issues=True, issue_url=issue_url)
+                __check_constraints(self, check_alert_issues=True, record=record)
 
         self.log.info('total_git_api_req_count', type='metric', count=self.request_count)
 
