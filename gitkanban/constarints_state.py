@@ -52,7 +52,7 @@ class ConstraintsStateDB(object):
             if records:
                 return [dict(zip(i.keys(), i)) for i in records]
 
-    def delete_failed_check(self, constraint_name, person, issue_url):
-        self.cursor.execute("DELETE FROM {} WHERE constraint_name='{}' and issue_url='{}' and person='{}'".format(self.failed_checks_table_name, constraint_name, issue_url, person))
+    def delete_failed_check(self, constraint_name, issue_url):
+        self.cursor.execute("DELETE FROM {} WHERE constraint_name='{}' and issue_url='{}'".format(self.failed_checks_table_name, constraint_name, issue_url))
         self.conn.commit()
 
