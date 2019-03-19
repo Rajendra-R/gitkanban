@@ -142,6 +142,10 @@ class GitKanban(BaseScript):
     def close_alert_to_github(self, alert_repo, alert_msg, record):
         try:
             get_alert_issue = alert_repo.get_issue(number=record['alert_issue_id'])
+            if get_alert_issue.state == "closed":
+                self.log.info("alert_is_already_closed", alert_url=get_alert_issue.url)
+                return
+
             get_alert_issue.create_comment(body="**Gitkanban:** Auto-Resolved")
             get_alert_issue.edit(state='closed')
             self.constraints.delete_failed_check(
