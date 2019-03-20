@@ -10,7 +10,6 @@ from pytz import timezone
 from dateutil import parser
 from dateutil.relativedelta import relativedelta
 
-from json2html import *
 from pylru import lrucache
 from github import Github, GithubException
 
@@ -22,7 +21,8 @@ TIMESTAMP_NOW = lambda : datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"
 ISSUE_URL = 'https://api.github.com/repos/{}/issues'
 LRU_CACHE_SIZE = 1000
 PEOPLES_BLACKLIST = ["deepcompute-agent", "deep-compute-ops"]
-ALERT_BODY_MSG = "### Alert: {}\n**Issue-title :** {}\n**Issue-url :** {}\n#### Additional-Details:\n{}\n"
+ALERT_TITLE = "No comment for {} ({}#{}) {} [Gitkanban]"
+ALERT_BODY = "No comment for **{}** ({}) {}."
 
 OWNERSHIP_HIERARCHY = [
     "assignees",
@@ -36,15 +36,6 @@ OWNERSHIP_HIERARCHY = [
     "repo-group",
     "system-owner"
 ]
-
-MSG_TABLE_KEYS = {
-    "priority": "Priority",
-    "constraint_name": "Constraint",
-    "queue_name": "Queue",
-    "person_name": "Person",
-    "repo_name": "Repository",
-    "repo_group_name": "Repository Group"
-}
 
 class GitKanban(BaseScript):
     DESC = "A tool to enhance Github issue management with Kanban flow"
@@ -96,43 +87,60 @@ class GitKanban(BaseScript):
         )
         ensure_repo_group_labels.set_defaults(func=self.ensure_repo_group_labels)
 
-    def send_alert_to_github(self, alert_repo, alert_msg):
+    def send_alert_to_github(self, alert_repo, alert_msg, record=None):
         # send alert to github
         try:
-            table_data = {}
-            for k, v in alert_msg.items():
-                if k in MSG_TABLE_KEYS.keys():
-                    table_data[MSG_TABLE_KEYS[k]] = v
-            data = json2html.convert(json = table_data)
-            body = ALERT_BODY_MSG.format(alert_msg['constraint_desc'],
-                alert_msg['issue_title'],
-                alert_msg['issue_html_url'],
-                data
-            )
-            labels=[
-                '{}-priority'.format(alert_msg['priority']),
-                '{}-repo'.format(alert_msg['repo_name']),
-                '{}-queue'.format(alert_msg['queue_name']),
-                '{}-constraint'.format(alert_msg['constraint_name'])
-            ]
-            if alert_msg['repo_group_name']:
-                labels.append('{}-repo-group'.format(alert_msg['repo_group_name']))
-            #TODO: check it is making multiple github api calls?
-            alert_issue = alert_repo.create_issue(
-                title="Gitkanban: {} failed for {}#{}".format(alert_msg['constraint_name'], alert_msg['repo_name'], alert_msg['issue_no']),
-                body=body,
-                assignees=[alert_msg['person_name']],
-                labels=labels
-            )
-            # insert record to failed check table
-            self.constraints.insert_failed_check(
-                alert_msg['constraint_name'],
-                alert_msg['person_name'],
-                alert_msg['issue_url'],
-                TIMESTAMP_NOW(),
-                alert_issue.number
-            )
-            self.log.info('successfully_inserted_alert_to_github')
+            if record:
+                get_alert_issue = alert_repo.get_issue(number=record['alert_issue_id'])
+                if get_alert_issue.state == "closed":
+                    self.log.info("alert_is_already_closed", alert_url=get_alert_issue.url)
+                    return
+                get_alert_issue.add_to_assignees(alert_msg['person_name'])
+                existed_names = record['person'].split(',')
+                if alert_msg['person_name'] in existed_names:
+                    return
+                existed_names.append(alert_msg['person_name'])
+                p_names = ','.join(existed_names)
+                # insert record to failed check table
+                self.constraints.insert_failed_check(
+                    record['constraint_name'],
+                    p_names,
+                    record['issue_url'],
+                    TIMESTAMP_NOW(),
+                    record['alert_issue_id']
+                )
+                self.log.info("add_assignee_to_existing_alert", **alert_msg)
+            else:
+                labels=[
+                    '{}-priority'.format(alert_msg['priority']),
+                    '{}-repo'.format(alert_msg['repo_name']),
+                    '{}-queue'.format(alert_msg['queue_name']),
+                    '{}-constraint'.format(alert_msg['constraint_name'])
+                ]
+                if alert_msg['repo_group_name']:
+                    labels.append('{}-repo-group'.format(alert_msg['repo_group_name']))
+
+                tail_desc = None
+                desc_split = alert_msg['constraint_desc'].split('issue')
+                if len(desc_split) == 2:
+                    tail_desc = desc_split[-1].strip()
+
+                #TODO: check it is making multiple github api calls?
+                alert_issue = alert_repo.create_issue(
+                    title=ALERT_TITLE.format(alert_msg['issue_title'], alert_msg['repo_name'], alert_msg['issue_no'], tail_desc),
+                    body=ALERT_BODY.format(alert_msg['issue_title'], alert_msg['issue_html_url'], tail_desc),
+                    assignees=[alert_msg['person_name']],
+                    labels=labels
+                )
+                # insert record to failed check table
+                self.constraints.insert_failed_check(
+                    alert_msg['constraint_name'],
+                    alert_msg['person_name'],
+                    alert_msg['issue_url'],
+                    TIMESTAMP_NOW(),
+                    alert_issue.number
+                )
+                self.log.info('successfully_inserted_alert_to_github')
         except GithubException as e:
             if e.data['message'] == "Validation Failed":
                 self.log.exception('got_error_while_inserting_alert', issue_url=alert_msg['issue_html_url'], error=e.data['errors'])
@@ -171,10 +179,10 @@ class GitKanban(BaseScript):
         return path
 
     def get_repo_list(self):
-        repo_groups = self.config_json.get('repo_groups', {})
+        config_repo_groups = self.config_json.get('repo_groups', {})
         final_repo_list = []
         try:
-            for k, v in repo_groups.items():
+            for k, v in config_repo_groups.items():
                 if isinstance(v, list):
                     for r in v:
                         repo_name = r.get('repo', '')
@@ -277,7 +285,7 @@ class GitKanban(BaseScript):
         check_issue_index.append("repo:{}".format(repo_name))
 
         for rn, rv in repo_groups.items():
-            if repo_name in [r['repo'] for r in rv]:
+            if repo_name in [r['repo'].full_name for r in rv]:
                 check_issue_index.append('repo_group:{}'.format(rn))
 
         # get all the ownership indexes from the config file of a issue
@@ -298,7 +306,6 @@ class GitKanban(BaseScript):
 
         # get the selected people from the config ownership based on issue
         ownership_people = {}
-        self.repo_group_name = None
         for op in final_ownership_list:
             #TODO: if we miss order the keys in the config file
             key = '-'.join([k.replace('_', '-') for k in op.keys() if not k == 'people'])
@@ -364,13 +371,15 @@ class GitKanban(BaseScript):
             self.request_count += 1
             self.log.info('successfully_reqested_a_url', url=url, params=params)
         except Exception as e:
-            self.log.debug('not_able_to_request', url=url, error=e)
+            self.log.exception('not_able_to_request', url=url, error=e)
 
         if isinstance(data, dict):
             if data.get('message', '') == 'Not Found':
-                raise NoDataFoundException
+                self.log.exception("No data found exception", data=data)
+                return
             elif data.get('message', '') == "Server Error":
-                raise GithubAPIException("Got Github Server Error Exception")
+                self.log.exception("Got Github Server Error Exception", data=data)
+                return
 
             data = [data]
 
@@ -456,10 +465,13 @@ class GitKanban(BaseScript):
         # req a issue comments url to get the last comment info
         comments_url = issue['comments_url']
         params = {"per_page": 100}
-        res_obj, data = self.make_request(comments_url, params)
-        last_page = res_obj.links.get('last', {}).get('url', '')
-        if last_page:
-            com_res_obj, data = self.make_request(last_page, params)
+        try:
+            res_obj, data = self.make_request(comments_url, params)
+            last_page = res_obj.links.get('last', {}).get('url', '')
+            if last_page:
+                com_res_obj, data = self.make_request(last_page, params)
+        except TypeError:
+            return False
 
         if data:
             issue_data = data[-1]
@@ -500,7 +512,6 @@ class GitKanban(BaseScript):
                     value.add(index)
                     ownership_index[key] = value
 
-
         checks = self.config_json.get('checks', [])
         co_info = {}
         for i in checks:
@@ -508,9 +519,9 @@ class GitKanban(BaseScript):
                 co_info[ci['name']] = ci
         queues = self.config_json.get('queues', {})
         queues_list = queues.values()
-        repo_groups = self.config_json.get('repo_groups', {})
         peoples = self.config_json.get('people', {})
         dc_peoples_list = peoples.keys()
+        repo_groups = self.config_json.get('repo_groups', {})
         # get the alert repo
         alert_repo = self.git.get_repo(self.args.alert_repo)
         # get all the repo's from the user specs
@@ -519,6 +530,11 @@ class GitKanban(BaseScript):
         # phase-1 Regular constraint check.
         for repo in final_repo_list:
             repo_name = repo['repo'].full_name
+            self.repo_group_name = None
+            # get the repo_group name for the repo
+            for rn, rv in repo_groups.items():
+                if repo_name in [r['repo'].full_name for r in rv]:
+                    self.repo_group_name = rn
             for ch in checks:
                 tmp_check_list = {}
                 tmp_nxt_check_list = []
@@ -551,9 +567,14 @@ class GitKanban(BaseScript):
 
                         # req a issue url with pagination
                         while True:
-                            resp_obj, issues_list = self.make_request(req_url, params=params)
+                            try:
+                                resp_obj, issues_list = self.make_request(req_url, params=params)
+                            except TypeError:
+                                break
+
                             next_page = resp_obj.links.get('next', {})
 
+                            # get issues for inbox constraints
                             if co_queue_name == "inbox":
                                 issues_list = [i for i in issues_list if not any (ln in queues_list for ln in [l['name'] for l in i['labels'] if l['name']])]
 
@@ -593,7 +614,14 @@ class GitKanban(BaseScript):
                                             continue
 
                                 # get peoples of the issue
-                                peoples_list = self.get_people(repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list)
+                                if check_alert_issues:
+                                    persons = record['person']
+                                    if ',' in persons:
+                                        peoples_list = persons.split(',')
+                                    else:
+                                        peoples_list = [persons]
+                                else:
+                                    peoples_list = self.get_people(repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list)
                                 for p in peoples_list:
                                     if p in PEOPLES_BLACKLIST or not p in dc_peoples_list:
                                         continue
@@ -629,17 +657,18 @@ class GitKanban(BaseScript):
 
                                         record = self.constraints.get_failed_check(
                                             constraint_name=co['name'],
-                                            person=p, issue_url=issue_url
+                                            issue_url=issue_url
                                         )
                                         if record:
-                                            already_alert.append("{}:{}:{}".format(co['name'], p, issue_url))
+                                            already_alert.append("{}:{}:{}".format(co['name'], record['person'], issue_url))
+                                            self.send_alert_to_github(alert_repo, alert_msg, record)
                                         else:
                                             self.send_alert_to_github(alert_repo, alert_msg)
 
                                     else:
                                         record = self.constraints.get_failed_check(
                                             constraint_name=co['name'],
-                                            person=p, issue_url=issue_url
+                                            issue_url=issue_url
                                         )
                                         if record:
                                             self.close_alert_to_github(alert_repo, alert_msg, record)

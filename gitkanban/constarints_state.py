@@ -20,7 +20,7 @@ class ConstraintsStateDB(object):
                 issue_url text NOT NULL,
                 datetime text NOT NULL,
                 alert_issue_id numeric NOT NULL,
-                PRIMARY KEY (issue_url, person, constraint_name)
+                PRIMARY KEY (issue_url, constraint_name)
             )'''.format(self.failed_checks_table_name))
 
         self.conn.commit()
