@@ -9,7 +9,7 @@ setup(
         "basescript==0.2.8",
         "PyGithub==1.43.5",
         "python-dateutil==2.8.0",
-        "requests==2.18.4",
+        "requests==2.20.1",
         "pylru==1.1.0",
     ],
     author="deep-compute",
