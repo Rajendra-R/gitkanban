@@ -93,8 +93,8 @@ class GitKanban(BaseScript):
             if record:
                 get_alert_issue = alert_repo.get_issue(number=record['alert_issue_id'])
                 if get_alert_issue.state == "closed":
-                    self.log.info("alert_is_already_closed", alert_url=get_alert_issue.url)
-                    return
+                    get_alert_issue.edit(state="open")
+                    self.log.info("re-open_manually_closed_alert", alert_url=get_alert_issue.url)
                 get_alert_issue.add_to_assignees(alert_msg['person_name'])
                 existed_names = record['person'].split(',')
                 if alert_msg['person_name'] in existed_names:
@@ -102,7 +102,7 @@ class GitKanban(BaseScript):
                 existed_names.append(alert_msg['person_name'])
                 p_names = ','.join(existed_names)
                 # insert record to failed check table
-                self.constraints.insert_failed_check(
+                self.constraints_db.insert_failed_check(
                     record['constraint_name'],
                     p_names,
                     record['issue_url'],
@@ -133,7 +133,7 @@ class GitKanban(BaseScript):
                     labels=labels
                 )
                 # insert record to failed check table
-                self.constraints.insert_failed_check(
+                self.constraints_db.insert_failed_check(
                     alert_msg['constraint_name'],
                     alert_msg['person_name'],
                     alert_msg['issue_url'],
@@ -156,7 +156,7 @@ class GitKanban(BaseScript):
 
             get_alert_issue.create_comment(body="**Gitkanban:** Auto-Resolved")
             get_alert_issue.edit(state='closed')
-            self.constraints.delete_failed_check(
+            self.constraints_db.delete_failed_check(
                 alert_msg['constraint_name'],
                 alert_msg['issue_url']
             )
@@ -495,7 +495,7 @@ class GitKanban(BaseScript):
         # prepare owndership index from the given config file
         # d = [{'a': 'a1', 'b': 'b1', 'c': 'c1'}, {'a': 'a1', 'd': 'd1'}, {'b': 'b1'}, {'e': 'e1'}]
         # {'a:a1': {0, 1}, 'b:b1': {0, 2}, 'c:c1': {0}, 'd:d1': {1}, 'e:e1': {3}}
-        self.constraints = ConstraintsStateDB(self.args.db)
+        self.constraints_db = ConstraintsStateDB(self.args.db)
         self.request_count = 0
         ownership_list = self.config_json.get('ownership', [])
         self.system_owners = next(o['system_owner'] for o in ownership_list if o.get('system_owner', []))
@@ -512,9 +512,9 @@ class GitKanban(BaseScript):
                     value.add(index)
                     ownership_index[key] = value
 
-        checks = self.config_json.get('checks', [])
+        constraints = self.config_json.get('constraints', [])
         co_info = {}
-        for i in checks:
+        for i in constraints:
             for ci in i:
                 co_info[ci['name']] = ci
         queues = self.config_json.get('queues', {})
@@ -535,7 +535,7 @@ class GitKanban(BaseScript):
             for rn, rv in repo_groups.items():
                 if repo_name in [r['repo'].full_name for r in rv]:
                     self.repo_group_name = rn
-            for ch in checks:
+            for ch in constraints:
                 tmp_check_list = {}
                 tmp_nxt_check_list = []
                 for co in ch:
@@ -604,7 +604,7 @@ class GitKanban(BaseScript):
                                     co_feruency = co['frequency']
                                     co_continue = co['continue']
                                     check_co_id = "{}:{}".format(co_name, issue_url)
-                                    last_executed_record = self.constraints.get_failed_check(constraint_name=co_name, 
+                                    last_executed_record = self.constraints_db.get_failed_check(constraint_name=co_name,
                                         issue_url=issue_url
                                     )
                                     if last_executed_record:
@@ -655,7 +655,7 @@ class GitKanban(BaseScript):
                                         else:
                                             tmp_check_list[issue_url] = False
 
-                                        record = self.constraints.get_failed_check(
+                                        record = self.constraints_db.get_failed_check(
                                             constraint_name=co['name'],
                                             issue_url=issue_url
                                         )
@@ -666,7 +666,7 @@ class GitKanban(BaseScript):
                                             self.send_alert_to_github(alert_repo, alert_msg)
 
                                     else:
-                                        record = self.constraints.get_failed_check(
+                                        record = self.constraints_db.get_failed_check(
                                             constraint_name=co['name'],
                                             issue_url=issue_url
                                         )
@@ -683,7 +683,7 @@ class GitKanban(BaseScript):
 
         # phase-2 check constraints
         #re-check the trigger issues
-        alerted_issues = self.constraints.get_failed_check()
+        alerted_issues = self.constraints_db.get_failed_check()
         if alerted_issues:
             for record in alerted_issues:
                 cons_name = record['constraint_name']
