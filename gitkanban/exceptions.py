@@ -17,5 +17,3 @@ class GithubAPIException(GitkanbanException):
     """when github server error occurs"""
     pass
 
-class NoDataFoundException(GitkanbanException):
-    pass
