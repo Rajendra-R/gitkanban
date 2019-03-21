@@ -152,16 +152,17 @@ class GitKanban(BaseScript):
             get_alert_issue = alert_repo.get_issue(number=record['alert_issue_id'])
             if get_alert_issue.state == "closed":
                 self.log.info("alert_is_already_closed", alert_url=get_alert_issue.url)
-                return
+            else:
+                get_alert_issue.create_comment(body="**Gitkanban:** Auto-Resolved")
+                get_alert_issue.edit(state='closed')
+                self.log.info('successfully_closed_alert_to_github', **alert_msg)
 
-            get_alert_issue.create_comment(body="**Gitkanban:** Auto-Resolved")
-            get_alert_issue.edit(state='closed')
             self.constraints_db.delete_failed_check(
                 alert_msg['constraint_name'],
                 alert_msg['issue_url']
             )
             alert_msg['alert_status'] = 'resolved'
-            self.log.info('successfully_closed_alert_to_github', **alert_msg)
+            self.log.info('successfully_deleted_record_in_db', **alert_msg)
         except GithubException as e:
             if e.data['message'] == "Validation Failed":
                 self.log.exception('got_error_while_closing_alert', error=e.data['errors'])
