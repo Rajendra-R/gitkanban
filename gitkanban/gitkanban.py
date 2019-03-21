@@ -375,10 +375,10 @@ class GitKanban(BaseScript):
 
         if isinstance(data, dict):
             if data.get('message', '') == 'Not Found':
-                self.log.exception("No data found exception", data=data)
+                self.log.exception("No data found exception", data=data, url=url)
                 return
             elif data.get('message', '') == "Server Error":
-                self.log.exception("Got Github Server Error Exception", data=data)
+                self.log.exception("Got Github Server Error Exception", data=data, url=url)
                 return
 
             data = [data]
@@ -515,8 +515,12 @@ class GitKanban(BaseScript):
         constraints = self.config_json.get('constraints', [])
         co_info = {}
         for i in constraints:
-            for ci in i:
-                co_info[ci['name']] = ci
+            if isinstance(i, list):
+                for ci in i:
+                    co_info[ci['name']] = ci
+            elif isinstance(i, dict):
+                co_info[i['name']] = i
+
         queues = self.config_json.get('queues', {})
         queues_list = queues.values()
         peoples = self.config_json.get('people', {})
@@ -526,6 +530,148 @@ class GitKanban(BaseScript):
         alert_repo = self.git.get_repo(self.args.alert_repo)
         # get all the repo's from the user specs
         final_repo_list = self.get_repo_list()
+
+        # sub function
+        def __check_constraints(self, co=None, check_alert_issues=False, record=None):
+            if check_alert_issues:
+                co = co_info[record['constraint_name']]
+            co_queue_name = co.get('queue', '')
+            actual_q_name = queues[co_queue_name]
+            # add params from config before going to request
+            if not actual_q_name:
+                params = {} # for inbox case
+            else:
+                if repo.get('label', ''):
+                    label_names = "{},{}".format(actual_q_name, repo['label'])
+                else:
+                    label_names = actual_q_name
+                params = {"labels": label_names}
+
+            if repo.get('assignee', ''):
+                params['assignee'] = repo['assignee']
+
+            params['per_page'] = 100
+
+            if check_alert_issues:
+                req_url = record['issue_url']
+            else:
+                # req a repo url to get the issues, default will get only open issues
+                req_url = ISSUE_URL.format(repo_name)
+
+            # req a issue url with pagination
+            while True:
+                try:
+                    resp_obj, issues_list = self.make_request(req_url, params=params)
+                except TypeError:
+                    break
+
+                next_page = resp_obj.links.get('next', {})
+
+                # get issues for inbox constraints
+                if co_queue_name == "inbox":
+                    issues_list = [i for i in issues_list if not any (ln in queues_list for ln in [l['name'] for l in i['labels'] if l['name']])]
+
+                for issue in issues_list:
+                    issue_url = issue['url']
+
+                    # skip the issues which are passed in the before constraint of first run
+                    if issue_url in tmp_check_list.keys():
+                        if not tmp_check_list[issue_url]:
+                            continue
+
+                    if issue_url in tmp_nxt_check_list:
+                        continue
+
+                    # if issue moved from one queue to other after alert
+                    # make a auto-resolve for the alerted issue
+                    if check_alert_issues:
+                        if actual_q_name not in [l['name'] for l in issue['labels']]:
+                            alert_msg = {"constraint_name": co['name'], "issue_url": issue_url}
+                            self.close_alert_to_github(alert_repo, alert_msg, record)
+                            continue
+
+                    # phase-1 Regular constraint ran
+                    if not check_alert_issues:
+                        # check last executed from sqlite
+                        co_name = co['name']
+                        co_feruency = co['frequency']
+                        co_continue = co['continue']
+                        check_co_id = "{}:{}".format(co_name, issue_url)
+                        last_executed_record = self.constraints_db.get_failed_check(constraint_name=co_name,
+                            issue_url=issue_url
+                        )
+                        if last_executed_record:
+                            if not self.check_last_constraint_executed(co, last_executed_record):
+                                if not co_continue:
+                                    tmp_nxt_check_list.append(issue_url)
+                                continue
+
+                    # get peoples of the issue
+                    if check_alert_issues:
+                        persons = record['person']
+                        if ',' in persons:
+                            peoples_list = persons.split(',')
+                        else:
+                            peoples_list = [persons]
+                    else:
+                        peoples_list = self.get_people(repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list)
+                    for p in peoples_list:
+                        if p in PEOPLES_BLACKLIST or not p in dc_peoples_list:
+                            continue
+
+                        people = peoples[p]
+                        #TODO: remove below two if cond
+                        if not people.get('work_hours', {}):
+                            people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
+                        if not people.get('location', ''):
+                            people['location'] = self.config_json.get('defaults', {})['location']
+
+                        alert_msg = {
+                            "priority": co['priority'],
+                            "issue_no": issue['number'],
+                            "issue_url": issue['url'],
+                            "issue_html_url": issue['html_url'],
+                            "issue_title": issue['title'],
+                            "constraint_name": co['name'],
+                            "queue_name": co['queue'],
+                            "constraint_desc": co['description'],
+                            "person_name": p,
+                            "repo_name": repo_name,
+                            "issue_creation_time": issue['created_at'],
+                            "repo_group_name": self.repo_group_name
+                        }
+
+                        # check the constraint is pass/not
+                        if self.check_constraint(co, issue, people):
+                            if co['continue']:
+                                tmp_check_list[issue_url] = True
+                            else:
+                                tmp_check_list[issue_url] = False
+
+                            record = self.constraints_db.get_failed_check(
+                                constraint_name=co['name'],
+                                issue_url=issue_url
+                            )
+                            if record:
+                                already_alert.append("{}:{}:{}".format(co['name'], record['person'], issue_url))
+                                self.send_alert_to_github(alert_repo, alert_msg, record)
+                            else:
+                                self.send_alert_to_github(alert_repo, alert_msg)
+
+                        else:
+                            record = self.constraints_db.get_failed_check(
+                                constraint_name=co['name'],
+                                issue_url=issue_url
+                            )
+                            if record:
+                                self.close_alert_to_github(alert_repo, alert_msg, record)
+
+                # req a pagination issue url
+                if not next_page:
+                    break
+                else:
+                    req_url = next_page['url']
+
         already_alert = []
         # phase-1 Regular constraint check.
         for repo in final_repo_list:
@@ -538,148 +684,11 @@ class GitKanban(BaseScript):
             for ch in constraints:
                 tmp_check_list = {}
                 tmp_nxt_check_list = []
-                for co in ch:
-                    def __check_constraints(self, co=None, check_alert_issues=False, record=None):
-                        if check_alert_issues:
-                            co = co_info[record['constraint_name']]
-                        co_queue_name = co.get('queue', '')
-                        actual_q_name = queues[co_queue_name]
-                        # add params from config before going to request
-                        if not actual_q_name:
-                            params = {} # for inbox case
-                        else:
-                            if repo.get('label', ''):
-                                label_names = "{},{}".format(actual_q_name, repo['label'])
-                            else:
-                                label_names = actual_q_name
-                            params = {"labels": label_names}
-
-                        if repo.get('assignee', ''):
-                            params['assignee'] = repo['assignee']
-
-                        params['per_page'] = 100
-
-                        if check_alert_issues:
-                            req_url = record['issue_url']
-                        else:
-                            # req a repo url to get the issues, default will get only open issues
-                            req_url = ISSUE_URL.format(repo_name)
-
-                        # req a issue url with pagination
-                        while True:
-                            try:
-                                resp_obj, issues_list = self.make_request(req_url, params=params)
-                            except TypeError:
-                                break
-
-                            next_page = resp_obj.links.get('next', {})
-
-                            # get issues for inbox constraints
-                            if co_queue_name == "inbox":
-                                issues_list = [i for i in issues_list if not any (ln in queues_list for ln in [l['name'] for l in i['labels'] if l['name']])]
-
-                            for issue in issues_list:
-                                issue_url = issue['url']
-
-                                # skip the issues which are passed in the before constraint of first run
-                                if issue_url in tmp_check_list.keys():
-                                    if not tmp_check_list[issue_url]:
-                                        continue
-
-                                if issue_url in tmp_nxt_check_list:
-                                    continue
-
-                                # if issue moved from one queue to other after alert
-                                # make a auto-resolve for the alerted issue
-                                if check_alert_issues:
-                                    if actual_q_name not in [l['name'] for l in issue['labels']]:
-                                        alert_msg = {"constraint_name": co['name'], "issue_url": issue_url}
-                                        self.close_alert_to_github(alert_repo, alert_msg, record)
-                                        continue
-
-                                # phase-1 Regular constraint ran
-                                if not check_alert_issues:
-                                    # check last executed from sqlite
-                                    co_name = co['name']
-                                    co_feruency = co['frequency']
-                                    co_continue = co['continue']
-                                    check_co_id = "{}:{}".format(co_name, issue_url)
-                                    last_executed_record = self.constraints_db.get_failed_check(constraint_name=co_name,
-                                        issue_url=issue_url
-                                    )
-                                    if last_executed_record:
-                                        if not self.check_last_constraint_executed(co, last_executed_record):
-                                            if not co_continue:
-                                                tmp_nxt_check_list.append(issue_url)
-                                            continue
-
-                                # get peoples of the issue
-                                if check_alert_issues:
-                                    persons = record['person']
-                                    if ',' in persons:
-                                        peoples_list = persons.split(',')
-                                    else:
-                                        peoples_list = [persons]
-                                else:
-                                    peoples_list = self.get_people(repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list)
-                                for p in peoples_list:
-                                    if p in PEOPLES_BLACKLIST or not p in dc_peoples_list:
-                                        continue
-
-                                    people = peoples[p]
-                                    #TODO: remove below two if cond
-                                    if not people.get('work_hours', {}):
-                                        people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
-                                    if not people.get('location', ''):
-                                        people['location'] = self.config_json.get('defaults', {})['location']
-
-                                    alert_msg = {
-                                        "priority": co['priority'],
-                                        "issue_no": issue['number'],
-                                        "issue_url": issue['url'],
-                                        "issue_html_url": issue['html_url'],
-                                        "issue_title": issue['title'],
-                                        "constraint_name": co['name'],
-                                        "queue_name": co['queue'],
-                                        "constraint_desc": co['description'],
-                                        "person_name": p,
-                                        "repo_name": repo_name,
-                                        "issue_creation_time": issue['created_at'],
-                                        "repo_group_name": self.repo_group_name
-                                    }
-
-                                    # check the constraint is pass/not
-                                    if self.check_constraint(co, issue, people):
-                                        if co['continue']:
-                                            tmp_check_list[issue_url] = True
-                                        else:
-                                            tmp_check_list[issue_url] = False
-
-                                        record = self.constraints_db.get_failed_check(
-                                            constraint_name=co['name'],
-                                            issue_url=issue_url
-                                        )
-                                        if record:
-                                            already_alert.append("{}:{}:{}".format(co['name'], record['person'], issue_url))
-                                            self.send_alert_to_github(alert_repo, alert_msg, record)
-                                        else:
-                                            self.send_alert_to_github(alert_repo, alert_msg)
-
-                                    else:
-                                        record = self.constraints_db.get_failed_check(
-                                            constraint_name=co['name'],
-                                            issue_url=issue_url
-                                        )
-                                        if record:
-                                            self.close_alert_to_github(alert_repo, alert_msg, record)
-
-                            # req a pagination issue url
-                            if not next_page:
-                                break
-                            else:
-                                req_url = next_page['url']
-
-                    __check_constraints(self, co=co)
+                if isinstance(ch, list):
+                    for co in ch:
+                        __check_constraints(self, co=co)
+                elif isinstance(ch, dict):
+                    __check_constraints(self, co=ch)
 
         # phase-2 check constraints
         #re-check the trigger issues
