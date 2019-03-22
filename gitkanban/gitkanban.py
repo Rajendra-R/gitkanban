@@ -186,6 +186,7 @@ class GitKanban(BaseScript):
             for k, v in config_repo_groups.items():
                 if isinstance(v, list):
                     for r in v:
+                        r['repo_group'] = k
                         repo_name = r.get('repo', '')
                         if '/' in repo_name:
                             r['repo'] = self.git.get_repo(repo_name)
@@ -677,11 +678,7 @@ class GitKanban(BaseScript):
         # phase-1 Regular constraint check.
         for repo in final_repo_list:
             repo_name = repo['repo'].full_name
-            self.repo_group_name = None
-            # get the repo_group name for the repo
-            for rn, rv in repo_groups.items():
-                if repo_name in [r['repo'].full_name for r in rv]:
-                    self.repo_group_name = rn
+            self.repo_group_name = repo['repo_group']
             for ch in constraints:
                 tmp_check_list = {}
                 tmp_nxt_check_list = []
