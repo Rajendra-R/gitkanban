@@ -20,15 +20,16 @@ class ConstraintsStateDB(object):
                 issue_url text NOT NULL,
                 datetime text NOT NULL,
                 alert_issue_id numeric NOT NULL,
+                escalation_hierarchy text NOT NULL,
                 PRIMARY KEY (issue_url, constraint_name)
             )'''.format(self.failed_checks_table_name))
 
         self.conn.commit()
 
-    def insert_failed_check(self, constraint_name, person, issue_url, datetime, alert_issue_id):
+    def insert_failed_check(self, constraint_name, person, issue_url, datetime, alert_issue_id, escalation_hierarchy):
         self.cursor.execute('''
-            INSERT OR REPLACE INTO {} values (?, ?, ?, ?, ?)'''.format(self.failed_checks_table_name),
-            (constraint_name, person, issue_url, datetime, alert_issue_id)
+            INSERT OR REPLACE INTO {} values (?, ?, ?, ?, ?, ?)'''.format(self.failed_checks_table_name),
+            (constraint_name, person, issue_url, datetime, alert_issue_id, escalation_hierarchy)
         )
         self.conn.commit()
 
