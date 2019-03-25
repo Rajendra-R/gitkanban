@@ -6,6 +6,7 @@ import datetime
 import dateutil
 import calendar
 import hashlib
+import copy
 from pytz import timezone
 from dateutil import parser
 from dateutil.relativedelta import relativedelta
@@ -17,12 +18,20 @@ from basescript import BaseScript
 from .constarints_state import ConstraintsStateDB
 from .exceptions import *
 
-TIMESTAMP_NOW = lambda : datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+TIMESTAMP_NOW = lambda : datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 ISSUE_URL = 'https://api.github.com/repos/{}/issues'
 LRU_CACHE_SIZE = 1000
 PEOPLES_BLACKLIST = ["deepcompute-agent", "deep-compute-ops"]
 ALERT_TITLE = "No comment for {} ({}#{}) {} [Gitkanban]"
 ALERT_BODY = "No comment for **{}** ({}) {}."
+DEFAULT_TIME_ELAPSED = "2h"
+
+DEFAULT_ESCALATE_CONSTRAINT = {
+    "time_elapsed": DEFAULT_TIME_ELAPSED,
+    "priority": "high",
+    "message": "Please resolve now",
+    "escalate": True
+}
 
 OWNERSHIP_HIERARCHY = [
     "assignees",
@@ -94,7 +103,7 @@ class GitKanban(BaseScript):
                 get_alert_issue = alert_repo.get_issue(number=record['alert_issue_id'])
                 if get_alert_issue.state == "closed":
                     get_alert_issue.edit(state="open")
-                    self.log.info("re-open_manually_closed_alert", alert_url=get_alert_issue.url)
+                    self.log.info("re_open_manually_closed_alert", alert_url=get_alert_issue.url)
                 get_alert_issue.add_to_assignees(alert_msg['person_name'])
                 existed_names = record['person'].split(',')
                 if alert_msg['person_name'] in existed_names:
@@ -107,7 +116,8 @@ class GitKanban(BaseScript):
                     p_names,
                     record['issue_url'],
                     TIMESTAMP_NOW(),
-                    record['alert_issue_id']
+                    record['alert_issue_id'],
+                    record['escalation_hierarchy']
                 )
                 self.log.info("add_assignee_to_existing_alert", **alert_msg)
             else:
@@ -138,7 +148,8 @@ class GitKanban(BaseScript):
                     alert_msg['person_name'],
                     alert_msg['issue_url'],
                     TIMESTAMP_NOW(),
-                    alert_issue.number
+                    alert_issue.number,
+                    alert_msg['ownership_hierarchy']
                 )
                 self.log.info('successfully_inserted_alert_to_github')
         except GithubException as e:
@@ -168,6 +179,67 @@ class GitKanban(BaseScript):
                 self.log.exception('got_error_while_closing_alert', error=e.data['errors'])
             else:
                 self.log.exception('github_api_call_failed_while_closing_alert', error=e)
+
+    def send_escalation_to_alert_issue(self, alert_repo, follow_up, record, peoples_list=None, own_hi=None):
+        get_alert_issue = alert_repo.get_issue(number=record['alert_issue_id'])
+        if get_alert_issue.state == "closed":
+            get_alert_issue.edit(state="open")
+            self.log.info("re_open_manually_closed_alert", alert_url=get_alert_issue.url)
+        if not peoples_list:
+            # send alert msg to assignees
+            msg = "**Gitkanban:** {}".format(follow_up['message'])
+            get_alert_issue.create_comment(body=msg)
+            self.log.info('send_alert_to_assignees')
+            # insert record to failed check table
+            alerts = record['escalation_hierarchy'].split(',')
+            alerts.append(follow_up['ownership'])
+            t_alerts = ','.join(alerts)
+            self.constraints_db.insert_failed_check(
+                record['constraint_name'],
+                record['person'],
+                record['issue_url'],
+                record['datetime'],
+                record['alert_issue_id'],
+                t_alerts
+            )
+            return
+
+        if own_hi == record['escalation_hierarchy']:
+            return
+
+        # send escalation msg to alert issue
+        msg = "**Gitkanban:** Escalates to **@{}** {}".format(', @'.join(peoples_list), follow_up['message'])
+        get_alert_issue.create_comment(body=msg)
+        # add escalate persons to assignees
+        existed_names = record['person'].split(',')
+        for p in peoples_list:
+            if p in existed_names:
+                continue
+            get_alert_issue.add_to_assignees(p)
+            existed_names.append(p)
+
+        p_names = ','.join(existed_names)
+        # add new escalation priority label
+        new_label = "{}-priority".format(follow_up['priority'])
+        existing_labels = [l.name for l in get_alert_issue.get_labels()]
+        if not new_label in existing_labels:
+            # delete existing priority label
+            for i in existing_labels:
+                if 'priority' in i:
+                    get_alert_issue.remove_from_labels(i)
+
+            get_alert_issue.add_to_labels(new_label)
+
+        # insert record to failed check table
+        self.constraints_db.insert_failed_check(
+            record['constraint_name'],
+            p_names,
+            record['issue_url'],
+            TIMESTAMP_NOW(),
+            record['alert_issue_id'],
+            own_hi
+        )
+        self.log.info('send_escalation_msg')
 
     def check_file_type(self, path):
         if not path.endswith('.json'):
@@ -269,7 +341,7 @@ class GitKanban(BaseScript):
                 label_edited=label_edited_count,
             )
 
-    def get_people(self, repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list):
+    def get_people(self, repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list, ownership):
         # prepare label separation for each issue
         # if issue has "next", "bug-type" labels
         # if that repo is present in our repo_group
@@ -299,7 +371,7 @@ class GitKanban(BaseScript):
 
         issue_ownership_intersection = set()
         if issue_ownership_index:
-            issue_ownership_intersection = set.intersection(*issue_ownership_index) # {1,2}
+            issue_ownership_intersection = set.intersection(*issue_ownership_index) # {2}
 
         # get ownership dic of a index from the config ownership [{}, {}]
         final_ownership_list = []
@@ -317,15 +389,16 @@ class GitKanban(BaseScript):
         if issue_assignees:
             ownership_people['assignees'] = issue_assignees
 
+        # add system_owner
+        ownership_people['system_owner'] = self.system_owners
+
         # get the people based on our ownership hierarchy
-        people = []
-        for oh in OWNERSHIP_HIERARCHY:
-            if oh in ownership_people.keys():
-                people = ownership_people[oh]
-                break
+        people = ()
+        if ownership in ownership_people.keys():
+            people = (ownership, ownership_people[ownership])
 
         if not people:
-            people.extend(self.system_owners)
+            people = (None, [])
 
         return people
 
@@ -333,8 +406,8 @@ class GitKanban(BaseScript):
         past = last_executed_record['datetime']
         current = TIMESTAMP_NOW()
 
-        start = datetime.datetime.strptime(past, '%Y-%m-%d %H:%M:%S')
-        end = datetime.datetime.strptime(current, '%Y-%m-%d %H:%M:%S')
+        start = datetime.datetime.strptime(past, '%Y-%m-%dT%H:%M:%SZ')
+        end = datetime.datetime.strptime(current, '%Y-%m-%dT%H:%M:%SZ')
 
         diff = relativedelta(end, start)
 
@@ -387,6 +460,34 @@ class GitKanban(BaseScript):
 
         self.lru[_id] = (resp_obj, data)
         return (resp_obj, data)
+
+    def check_person_is_in_work_hours(self, people):
+        p_name = people['name']
+        p_location = people['location']
+        pwh_start = people['work_hours']['start']
+        pwh_start_h, pwh_start_m = pwh_start.split(':')
+        pwh_end = people['work_hours']['end']
+        pwh_end_h, pwh_end_m = pwh_end.split(':')
+        p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
+
+        # convert person timezone current time to UTC timezone
+        p_current_time = datetime.datetime.now(timezone(p_timezone))
+        p_current_time_utc = datetime.datetime.now(timezone(p_timezone)).astimezone(timezone('UTC')).time()
+
+
+        # person UTC working time start
+        self.pwh_start_utc = p_current_time.replace(hour=int(pwh_start_h), minute=int(pwh_start_m)).astimezone(timezone('UTC')).strftime('%Y-%m-%dT%H:%M:%SZ')
+        pwh_start_utc_hours = parser.parse(self.pwh_start_utc).hour
+        pwh_start_utc_minute = parser.parse(self.pwh_start_utc).minute
+
+        # person UTC working time end
+        self.pwh_end_utc = p_current_time.replace(hour=int(pwh_end_h), minute=int(pwh_end_m)).astimezone(timezone('UTC')).strftime('%Y-%m-%dT%H:%M:%SZ')
+        pwh_end_utc_hours = parser.parse(self.pwh_end_utc).hour
+        pwh_end_utc_minute = parser.parse(self.pwh_end_utc).minute
+
+        start = datetime.time(pwh_start_utc_hours, pwh_start_utc_minute)
+        end = datetime.time(pwh_end_utc_hours, pwh_end_utc_minute)
+        return (start <= p_current_time_utc <= end)
 
     def get_issue_created_datetime(self, issue_created_at, people):
         # person config info
@@ -453,12 +554,10 @@ class GitKanban(BaseScript):
         months = diff_time.months
         days = diff_time.days
         hours = diff_time.hours
+
         #TODO: check year, months having 31, holidays, leapyear,..
         total_hours = int(((months * 30) * 24) + (days * 24) + hours)
-        if total_hours > int(c_hours):
-            return True
-
-        return False
+        return (total_hours > int(c_hours))
 
     def check_constraint(self, constraint, issue, people):
         # issue already closed but when issue come from our failed table.
@@ -488,10 +587,7 @@ class GitKanban(BaseScript):
         # check the person is in working hours
         # based on our custom timezone logic of a person change the issue created time
         issue_created_at = self.get_issue_created_datetime(issue_created_at, people)
-        if self.calculate_time_constraint(time_constraint, issue_created_at, self.p_current_time_utc):
-            return True
-
-        return False
+        return self.calculate_time_constraint(time_constraint, issue_created_at, self.p_current_time_utc)
 
     def check_constraints(self):
         # prepare owndership index from the given config file
@@ -611,12 +707,14 @@ class GitKanban(BaseScript):
                     # get peoples of the issue
                     if check_alert_issues:
                         persons = record['person']
+                        own_hi = record['escalation_hierarchy']
                         if ',' in persons:
                             peoples_list = persons.split(',')
                         else:
                             peoples_list = [persons]
                     else:
-                        peoples_list = self.get_people(repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list)
+                        ownership = "assignees"
+                        own_hi, peoples_list = self.get_people(repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list, ownership)
                     for p in peoples_list:
                         if p in PEOPLES_BLACKLIST or not p in dc_peoples_list:
                             continue
@@ -636,11 +734,12 @@ class GitKanban(BaseScript):
                             "issue_title": issue['title'],
                             "constraint_name": co['name'],
                             "queue_name": co['queue'],
-                            "constraint_desc": co['description'],
+                            "constraint_desc": co['message'],
                             "person_name": p,
                             "repo_name": repo_name,
                             "issue_creation_time": issue['created_at'],
-                            "repo_group_name": self.repo_group_name
+                            "repo_group_name": self.repo_group_name,
+                            "ownership_hierarchy": own_hi
                         }
 
                         # check the constraint is pass/not
@@ -657,6 +756,51 @@ class GitKanban(BaseScript):
                             if record:
                                 already_alert.append("{}:{}:{}".format(co['name'], record['person'], issue_url))
                                 self.send_alert_to_github(alert_repo, alert_msg, record)
+                                # escalation logic
+                                last_alert_time = record['datetime']
+                                escalation_done = False
+                                for f in co['follow_ups']:
+                                    time_elapsed = f['time_elapsed']
+                                    # iterate over escalation constraints
+                                    if "escalate" in f.keys():
+                                        ownership = f['ownership']
+                                        own_hi, pe_list = self.get_people(
+                                            repo_name, issue,
+                                            ownership_index,
+                                            queues_list,
+                                            repo_groups,
+                                            ownership_list,
+                                            ownership
+                                        )
+                                        for ap in pe_list:
+                                            _people = peoples[ap]
+                                            #TODO: remove below two if cond
+                                            if not _people.get('work_hours', {}):
+                                                _people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
+                                            if not _people.get('location', ''):
+                                                _people['location'] = self.config_json.get('defaults', {})['location']
+                                            p_location = _people['location']
+                                            p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
+                                            p_current_time_utc = datetime.datetime.now(timezone(p_timezone)).astimezone(timezone('UTC')).strftime('%Y-%m-%dT%H:%M:%SZ')
+                                            if self.calculate_time_constraint(time_elapsed, last_alert_time, p_current_time_utc):
+                                                if self.check_person_is_in_work_hours(_people):
+                                                    self.send_escalation_to_alert_issue(alert_repo, f, record, pe_list, own_hi)
+                                                    escalation_done = True
+                                        if escalation_done:
+                                            break
+                                    else:
+                                        # assignees alert msg before escalate
+                                        if record['escalation_hierarchy'] in OWNERSHIP_HIERARCHY[1:]:
+                                            break
+                                        elif f['ownership'] in record['escalation_hierarchy'].split(','):
+                                            break
+                                        p_location = people['location']
+                                        p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
+                                        p_current_time_utc = datetime.datetime.now(timezone(p_timezone)).astimezone(timezone('UTC')).strftime('%Y-%m-%dT%H:%M:%SZ')
+                                        if self.calculate_time_constraint(time_elapsed, last_alert_time, p_current_time_utc):
+                                            if self.check_person_is_in_work_hours(people):
+                                                self.send_escalation_to_alert_issue(alert_repo, f, record)
+                                                break
                             else:
                                 self.send_alert_to_github(alert_repo, alert_msg)
 
@@ -684,12 +828,14 @@ class GitKanban(BaseScript):
                 tmp_nxt_check_list = []
                 if isinstance(ch, list):
                     for co in ch:
+                        co = self.prepare_valid_constraint_dict(co)
                         __check_constraints(self, co=co)
                 elif isinstance(ch, dict):
-                    __check_constraints(self, co=ch)
+                    co = self.prepare_valid_constraint_dict(ch)
+                    __check_constraints(self, co=co)
 
         # phase-2 check constraints
-        #re-check the trigger issues
+        #re-check the failed checks table issues
         alerted_issues = self.constraints_db.get_failed_check()
         if alerted_issues:
             for record in alerted_issues:
@@ -703,6 +849,52 @@ class GitKanban(BaseScript):
                 __check_constraints(self, check_alert_issues=True, record=record)
 
         self.log.info('total_git_api_req_count', type='metric', count=self.request_count)
+
+    def prepare_valid_constraint_dict(self, co):
+        final_co = {}
+        follow_ups = co.get('follow_ups', [])
+        default_time_elapsed = self.config_json.get('defaults', {}).get('time_elapsed', '')
+        default_time_elapsed = default_time_elapsed if default_time_elapsed else DEFAULT_TIME_ELAPSED
+        check_escalate = [j for j in follow_ups if "escalate" in j.keys()]
+        if not follow_ups:
+            co['follow_ups'] = [DEFAULT_ESCALATE_CONSTRAINT for i in range(len(OWNERSHIP_HIERARCHY)-1)]
+        elif follow_ups and not check_escalate:
+            follow_ups.extend([DEFAULT_ESCALATE_CONSTRAINT for i in range(len(OWNERSHIP_HIERARCHY)-1)])
+        elif check_escalate:
+            config_time_elapsed = follow_ups[-1].get('time_elapsed', '')
+            for i in range((len(OWNERSHIP_HIERARCHY)-1)-len(check_escalate)):
+                DEFAULT_ESCALATE_CONSTRAINT['time_elapsed'] = config_time_elapsed
+                follow_ups.append(DEFAULT_ESCALATE_CONSTRAINT)
+
+        time_since_activity = co.get('time_since_activity', '')
+        if 'h' in time_since_activity:
+            t_hours = int(time_since_activity.split('h')[0].strip())
+            w = []
+            l = []
+            alert_msg = 1
+            for d in co.get('follow_ups', []):
+                if not "escalate" in d.keys():
+                    _d = copy.deepcopy(d)
+                    _d['ownership'] = "alert{}".format(alert_msg)
+                    alert_msg += 1
+                    w.append(_d)
+                    continue
+                curr_time_elapsed = int(d['time_elapsed'].split('h')[0].strip())
+                _t_hours = t_hours + curr_time_elapsed
+                t_hours = _t_hours
+                _d = copy.deepcopy(d)
+                _d['time_elapsed'] = "{}h".format(_t_hours)
+                l.append(_d)
+
+        x = []
+        x.extend(w)
+        for o, k in zip(OWNERSHIP_HIERARCHY[1:], l):
+            k['ownership'] = o
+            x.append(k)
+
+        x.reverse()
+        co['follow_ups'] = x
+        return co
 
     def ensure_repo_group_labels(self):
         repo_groups = self.config_json.get('repo_groups', {})
