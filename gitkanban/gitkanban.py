@@ -15,7 +15,7 @@ from pylru import lrucache
 from github import Github, GithubException
 
 from basescript import BaseScript
-from .constarints_state import ConstraintsStateDB
+from .constraints_state import ConstraintsStateDB
 from .exceptions import *
 
 TIMESTAMP_NOW = lambda : datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
