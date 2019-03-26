@@ -47,6 +47,14 @@ class ConstraintsStateDB(object):
             if records:
                 row = records[0]
                 return dict(zip(row.keys(), row))
+
+        elif issue_url:
+            self.cursor.execute("SELECT * from {} where issue_url='{}'".format(self.failed_checks_table_name, issue_url))
+            records = [ i for i in self.cursor.fetchall() ]
+            if records:
+                row = records[0]
+                return dict(zip(row.keys(), row))
+
         else:
             self.cursor.execute("SELECT * from {}".format(self.failed_checks_table_name))
             records = [ i for i in self.cursor.fetchall() ]
