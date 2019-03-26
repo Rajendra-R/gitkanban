@@ -921,8 +921,9 @@ class GitKanban(BaseScript):
         for rg_name, rg_list in repo_groups.items():
             existing_labels = []
             for r in rg_list:
-                if 'label' in r.keys():
-                    continue
+                #TODO: below if cond for particaular case
+                #if 'label' in r.keys():
+                #    continue
                 repo_name = r['repo']
                 try:
                     repo = self.git.get_repo(repo_name)
@@ -944,6 +945,8 @@ class GitKanban(BaseScript):
                     repo.create_label(rg_label_name, rg_label['color'], rg_label['description'])
 
                 for i in repo.get_issues():
+                    existing_labels = [l.name for l in i.get_labels()]
+                    if not rg_label_name in existing_labels:
                         i.add_to_labels(rg_label_name)
 
                 self.log.info('completed_adding_team_label', repo_name=r, repo_group=rg_name)
