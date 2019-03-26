@@ -744,6 +744,9 @@ class GitKanban(BaseScript):
 
                         # check the constraint is pass/not
                         if self.check_constraint(co, issue, people):
+                            # check the person is in work_hours
+                            if not self.check_person_is_in_work_hours(people):
+                                continue
                             if co['continue']:
                                 tmp_check_list[issue_url] = True
                             else:
