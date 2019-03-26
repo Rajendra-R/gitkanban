@@ -393,7 +393,7 @@ class GitKanban(BaseScript):
             ownership_people['assignees'] = issue_assignees
 
         # add system_owner
-        ownership_people['system_owner'] = self.system_owners
+        ownership_people['system-owner'] = self.system_owners
 
         # get the people based on our ownership hierarchy
         people = ()
@@ -773,21 +773,29 @@ class GitKanban(BaseScript):
                                     co_follow_ups[d['ownership']] = d
 
                                 # iterate over alert msgs
+                                alert_done = alert_wait = False
                                 for k, v in co_follow_ups.items():
                                     if 'alert' in k:
                                         time_elapsed = v['time_elapsed']
                                         # assignees alert msg before escalate
                                         if last_escalation in OWNERSHIP_HIERARCHY[1:]:
                                             break
-                                        elif v['ownership'] in last_escalation.split(','):
+                                        if v['ownership'] in last_escalation.split(','):
                                             continue
+                                        else:
+                                            alert_wait = True
                                         p_location = people['location']
                                         p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
                                         p_current_time_utc = datetime.datetime.now(timezone(p_timezone)).astimezone(timezone('UTC')).strftime('%Y-%m-%dT%H:%M:%SZ')
                                         if self.calculate_time_constraint(time_elapsed, last_alert_time, p_current_time_utc):
                                             if self.check_person_is_in_work_hours(people):
                                                 self.send_escalation_to_alert_issue(alert_repo, v, record)
+                                                alert_done = True
                                                 break
+
+                                # if alert wait/done don't check escalation
+                                if alert_wait or alert_done:
+                                    continue
 
                                 last_alert_time = record['datetime']
                                 last_escalation = record['escalation_hierarchy']
