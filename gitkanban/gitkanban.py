@@ -696,7 +696,7 @@ class GitKanban(BaseScript):
                         # check last executed from sqlite
                         co_name = co['name']
                         co_feruency = co['frequency']
-                        co_continue = co['continue']
+                        co_continue = co.get('continue', False)
                         check_co_id = "{}:{}".format(co_name, issue_url)
                         last_executed_record = self.constraints_db.get_failed_check(constraint_name=co_name,
                             issue_url=issue_url
@@ -753,7 +753,7 @@ class GitKanban(BaseScript):
                             if not self.check_person_is_in_work_hours(people):
                                 continue
 
-                            if co['continue']:
+                            if co.get('continue', False):
                                 tmp_check_list[issue_url] = True
                             else:
                                 tmp_check_list[issue_url] = False
