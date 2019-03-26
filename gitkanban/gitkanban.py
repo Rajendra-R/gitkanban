@@ -22,8 +22,6 @@ TIMESTAMP_NOW = lambda : datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ
 ISSUE_URL = 'https://api.github.com/repos/{}/issues'
 LRU_CACHE_SIZE = 1000
 PEOPLES_BLACKLIST = ["deepcompute-agent", "deep-compute-ops"]
-ALERT_TITLE = "No comment for {} ({}#{}) {} [Gitkanban]"
-ALERT_BODY = "No comment for **{}** ({}) {}."
 DEFAULT_TIME_ELAPSED = "2h"
 
 DEFAULT_ESCALATE_CONSTRAINT = {
@@ -104,10 +102,10 @@ class GitKanban(BaseScript):
                 if get_alert_issue.state == "closed":
                     get_alert_issue.edit(state="open")
                     self.log.info("re_open_manually_closed_alert", alert_url=get_alert_issue.url)
-                get_alert_issue.add_to_assignees(alert_msg['person_name'])
                 existed_names = record['person'].split(',')
                 if alert_msg['person_name'] in existed_names:
                     return
+                get_alert_issue.add_to_assignees(alert_msg['person_name'])
                 existed_names.append(alert_msg['person_name'])
                 p_names = ','.join(existed_names)
                 # insert record to failed check table
@@ -130,15 +128,18 @@ class GitKanban(BaseScript):
                 if alert_msg['repo_group_name']:
                     labels.append('{}-repo-group'.format(alert_msg['repo_group_name']))
 
-                tail_desc = None
-                desc_split = alert_msg['constraint_desc'].split('issue')
-                if len(desc_split) == 2:
-                    tail_desc = desc_split[-1].strip()
-
                 #TODO: check it is making multiple github api calls?
+                issue_title = alert_msg['issue_title']
+                issue_id = "{}#{}".format(alert_msg['repo_name'], alert_msg['issue_no'])
+                time_since_activity = alert_msg['time_since_activity']
+                alert_title = alert_msg['constraint_title'].format(issue_title=issue_title, issue_id=issue_id,
+                    time_since_activity=time_since_activity)
+                alert_desc = alert_msg['constraint_desc']
+                if not alert_desc:
+                    alert_desc = alert_title
                 alert_issue = alert_repo.create_issue(
-                    title=ALERT_TITLE.format(alert_msg['issue_title'], alert_msg['repo_name'], alert_msg['issue_no'], tail_desc),
-                    body=ALERT_BODY.format(alert_msg['issue_title'], alert_msg['issue_html_url'], tail_desc),
+                    title=alert_title,
+                    body=alert_desc,
                     assignees=[alert_msg['person_name']],
                     labels=labels
                 )
@@ -199,7 +200,7 @@ class GitKanban(BaseScript):
 
         if not peoples_list:
             # send alert msg to assignees
-            msg = "**Gitkanban:** {}".format(follow_up['message'])
+            msg = "{}".format(follow_up['message'])
             get_alert_issue.create_comment(body=msg)
             self.log.info('send_alert_to_assignees')
             # insert record to failed check table
@@ -220,7 +221,7 @@ class GitKanban(BaseScript):
             return
 
         # send escalation msg to alert issue
-        msg = "**Gitkanban:** Escalates to **@{}** {}".format(', @'.join(peoples_list), follow_up['message'])
+        msg = "{}\n**Note:** @{}".format(follow_up['message'], ', @'.join(peoples_list))
         get_alert_issue.create_comment(body=msg)
         # add escalate persons to assignees
         existed_names = record['person'].split(',')
@@ -559,7 +560,7 @@ class GitKanban(BaseScript):
 
         #TODO: check year, months having 31, holidays, leapyear,..
         total_hours = int(((months * 30) * 24) + (days * 24) + hours)
-        return (total_hours >= int(c_hours))
+        return (total_hours > int(c_hours))
 
     def check_constraint(self, constraint, issue, people):
         # issue already closed but when issue come from our failed table.
@@ -736,7 +737,9 @@ class GitKanban(BaseScript):
                             "issue_title": issue['title'],
                             "constraint_name": co['name'],
                             "queue_name": co['queue'],
-                            "constraint_desc": co['message'],
+                            "constraint_title": co['title'],
+                            "constraint_desc": co['description'],
+                            "time_since_activity": co['time_since_activity'],
                             "person_name": p,
                             "repo_name": repo_name,
                             "issue_creation_time": issue['created_at'],
