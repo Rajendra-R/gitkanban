@@ -560,7 +560,7 @@ class GitKanban(BaseScript):
 
         #TODO: check year, months having 31, holidays, leapyear,..
         total_hours = int(((months * 30) * 24) + (days * 24) + hours)
-        return (total_hours > int(c_hours))
+        return (total_hours >= int(c_hours))
 
     def check_constraint(self, constraint, issue, people):
         # issue already closed but when issue come from our failed table.
