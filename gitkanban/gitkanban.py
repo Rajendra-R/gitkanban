@@ -845,7 +845,8 @@ class GitKanban(BaseScript):
                                 issue_url=issue_url
                             )
                             if record:
-                                self.close_alert_to_github(alert_repo, alert_msg, record)
+                                if check_alert_issues:
+                                    self.close_alert_to_github(alert_repo, alert_msg, record)
 
                 # req a pagination issue url
                 if not next_page:
