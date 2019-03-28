@@ -23,6 +23,7 @@ ISSUE_URL = 'https://api.github.com/repos/{}/issues'
 LRU_CACHE_SIZE = 1000
 PEOPLES_BLACKLIST = ["deepcompute-agent", "deep-compute-ops"]
 DEFAULT_TIME_ELAPSED = "2h"
+MAX_RETRIES = 3
 
 DEFAULT_ESCALATE_CONSTRAINT = {
     "time_elapsed": DEFAULT_TIME_ELAPSED,
@@ -271,11 +272,11 @@ class GitKanban(BaseScript):
                         final_repo_list.append(r)
         except GithubException as e:
             if e.data['message'] == "Server Error":
-                raise GithubAPIException("Got Github Server Error Exception")
+                self.log.exception('got_github_server_error', repo=r)
             elif e.data['message'] == "Not Found":
-                self.log.exception('invalid_repository_name', repo_name=rn)
-            elif 'API rate limit exceeded for user ID' in e.data['message']:
-                self.log.exception('api_rate_limit_exceeded', repo_name=rn)
+                self.log.exception('invalid_repository_name', repo=r)
+            elif 'API rate limit exceeded' in e.data['message']:
+                self.log.exception('api_rate_limit_exceeded', repo=r)
             elif e.data['message'] == "Validation Failed":
                 self.log.exception('got_validation_failed', error=e.data['errors'])
             sys.exit(1)
@@ -435,6 +436,7 @@ class GitKanban(BaseScript):
 
     def make_request(self, url, params=None):
         params = params or {}
+        retry_count = 0
         params['access_token'] = self.args.github_access_token
         already_requested, _id = self.is_already_requested(url, params)
         # check response form the cache.
@@ -444,21 +446,40 @@ class GitKanban(BaseScript):
             return (resp_obj, data)
 
         try:
-            resp_obj = requests.get(url, params=params)
-            data = resp_obj.json()
+            while True:
+                if retry_count < MAX_RETRIES:
+                    resp_obj = requests.get(url, params=params)
+                    data = resp_obj.json()
+                    if resp_obj.status_code == 502:
+                        self.log.exception("retry_a_url", retry_count=retry_count, data=data, url=url, params=params)
+                        self.request_count += 1
+                        retry_count += 1
+                    else:
+                        break
+                else:
+                    break
+            #TODO: Have to handle few more status_codes
+            if resp_obj.status_code == 403:
+                #TODO: Have to wait for till Retry-After time
+                self.log.exception("github_api_rate_limit_exceeded", data=resp_obj.headers)
+                sys.exit(1)
+            elif resp_obj.status_code == 404:
+                self.log.exception("no_data_found", data=data, url=url, params=params)
+                return
+            elif resp_obj.status_code == 502:
+                self.log.exception("got_github_server_error_after_max_retries",
+                    retry_count=retry_count, data=data, url=url, params=params
+                )
+                return
+            elif resp_obj.status_code == 422:
+                self.log.exception("got_invalid_fields", data=data, url=url, params=params)
+                return
             self.request_count += 1
             self.log.info('successfully_reqested_a_url', url=url, params=params)
         except Exception as e:
             self.log.exception('not_able_to_request', url=url, error=e)
 
         if isinstance(data, dict):
-            if data.get('message', '') == 'Not Found':
-                self.log.exception("No data found exception", data=data, url=url)
-                return
-            elif data.get('message', '') == "Server Error":
-                self.log.exception("Got Github Server Error Exception", data=data, url=url)
-                return
-
             data = [data]
 
         self.lru[_id] = (resp_obj, data)
@@ -941,7 +962,7 @@ class GitKanban(BaseScript):
                         raise GithubAPIException("Got Github ServerError Exception")
                     elif e.data['message'] == "Not Found":
                         self.log.exception('invalid_repository_name', repo_name=repo_name)
-                    elif 'API rate limit exceeded for user ID' in e.data['message']:
+                    elif 'API rate limit exceeded' in e.data['message']:
                         self.log.exception('api_rate_limit_exceeded', repo_name=repo_name)
                     sys.exit(1)
 
