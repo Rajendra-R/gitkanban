@@ -352,6 +352,10 @@ class GitKanban(BaseScript):
         # -> ["queue:next", "label:bug-type", "repo:gitchecking/third", "repo_group:group1"]
         issue_labels = [l['name'] for l in issue['labels']]
         issue_assignees = [a['login'] for a in issue['assignees']]
+        # if pull request has reviewers
+        pr_reviewers = [r['login'] for r in issue.get('requested_reviewers', [])]
+        issue_assignees.extend(pr_reviewers)
+
         check_issue_index = []
         for l in issue_labels:
             if l in queues_list:
@@ -438,6 +442,7 @@ class GitKanban(BaseScript):
         params = params or {}
         retry_count = 0
         params['access_token'] = self.args.github_access_token
+        params['per_page'] = 100
         already_requested, _id = self.is_already_requested(url, params)
         # check response form the cache.
         if already_requested:
@@ -583,32 +588,57 @@ class GitKanban(BaseScript):
         total_hours = int(((months * 30) * 24) + (days * 24) + hours)
         return (total_hours >= int(c_hours))
 
+    def get_pr_recent_time(self, issue):
+        pr_cm_co_dates = []
+        pr_cm_co_urls = []
+        pr_cm_co_urls.append(issue['commits_url'])
+        pr_cm_co_urls.append(issue['comments_url'])
+        for u in pr_cm_co_urls:
+            try:
+                r_obj, data = self.make_request(u)
+                last_page = r_obj.links.get('last', {}).get('url', '')
+                if last_page:
+                    com_res_obj, data = self.make_request(last_page, params)
+            except TypeError:
+                return
+            if data:
+                if 'pulls' in u:
+                    pr_cm_co_dates.append(data[-1]['commit']['committer']['date'])
+                else:
+                    pr_cm_co_dates.append(data[-1]['created_at'])
+
+        # pick the recent action date
+        pr_cm_co_dates.sort()
+        return pr_cm_co_dates[-1]
+
     def check_constraint(self, constraint, issue, people):
+        time_constraint = constraint.get('time_since_creation', '') or constraint.get('time_since_activity', '')
         # issue already closed but when issue come from our failed table.
         if issue['state'] == "closed":
             return False
-        # req a issue comments url to get the last comment info
-        comments_url = issue['comments_url']
-        params = {"per_page": 100}
-        try:
-            res_obj, data = self.make_request(comments_url, params)
-            last_page = res_obj.links.get('last', {}).get('url', '')
-            if last_page:
-                com_res_obj, data = self.make_request(last_page, params)
-        except TypeError:
-            return False
-
-        if data:
-            issue_data = data[-1]
+        # For pull request issues
+        if issue.get('commits_url', ''):
+            issue_created_at = self.get_pr_recent_time(issue)
         else:
-            issue_data = issue
+            # req a issue comments url to get the last comment info
+            comments_url = issue['comments_url']
+            try:
+                res_obj, data = self.make_request(comments_url)
+                last_page = res_obj.links.get('last', {}).get('url', '')
+                if last_page:
+                    com_res_obj, data = self.make_request(last_page, params)
+            except TypeError:
+                return False
 
-        issue_created_at = issue_data['created_at']
-        issue_updated_at = issue_data['updated_at']
+            if data:
+                issue_data = data[-1]
+            else:
+                issue_data = issue
 
-        time_constraint = constraint.get('time_since_creation', '') or constraint.get('time_since_activity', '')
+            issue_created_at = issue_data['created_at']
+            #TODO: have to consider comment updated date
+            #issue_updated_at = issue_data['updated_at']
 
-        # check the person is in working hours
         # based on our custom timezone logic of a person change the issue created time
         issue_created_at = self.get_issue_created_datetime(issue_created_at, people)
         return self.calculate_time_constraint(time_constraint, issue_created_at, self.p_current_time_utc)
@@ -672,8 +702,6 @@ class GitKanban(BaseScript):
             if repo.get('assignee', ''):
                 params['assignee'] = repo['assignee']
 
-            params['per_page'] = 100
-
             if check_alert_issues:
                 req_url = record['issue_url']
             else:
@@ -694,6 +722,18 @@ class GitKanban(BaseScript):
                     issues_list = [i for i in issues_list if not any (ln in queues_list for ln in [l['name'] for l in i['labels'] if l['name']])]
 
                 for issue in issues_list:
+                    # if issue is a pull request
+                    pull_request = issue.get('pull_request', {})
+                    if pull_request:
+                        pr_url = pull_request['url']
+                        try:
+                            resp_obj, issues_list = self.make_request(pr_url)
+                        except TypeError:
+                            continue
+                        assert len(issues_list) <=1, "bad pull request"
+                        issue = issues_list[0]
+
+                    # for normal issues
                     issue_url = issue['url']
 
                     # skip the issues which are passed in the before constraint of first run
