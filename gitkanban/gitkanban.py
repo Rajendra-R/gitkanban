@@ -602,7 +602,7 @@ class GitKanban(BaseScript):
             except TypeError:
                 return
             if data:
-                if 'pulls' in u:
+                if '/pulls/' in u:
                     pr_cm_co_dates.append(data[-1]['commit']['committer']['date'])
                 else:
                     pr_cm_co_dates.append(data[-1]['created_at'])
