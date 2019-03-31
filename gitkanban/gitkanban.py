@@ -501,8 +501,10 @@ class GitKanban(BaseScript):
 
         # convert person timezone current time to UTC timezone
         p_current_time = datetime.datetime.now(timezone(p_timezone))
+        # check the current date in weekend
+        if calendar.day_name[p_current_time.date().weekday()] in ["Saturday", "Sunday"]:
+            return False
         p_current_time_utc = datetime.datetime.now(timezone(p_timezone)).astimezone(timezone('UTC')).time()
-
 
         # person UTC working time start
         self.pwh_start_utc = p_current_time.replace(hour=int(pwh_start_h), minute=int(pwh_start_m)).astimezone(timezone('UTC')).strftime('%Y-%m-%dT%H:%M:%SZ')
