@@ -24,6 +24,7 @@ LRU_CACHE_SIZE = 1000
 PEOPLES_BLACKLIST = ["deepcompute-agent", "deep-compute-ops"]
 DEFAULT_TIME_ELAPSED = "2h"
 MAX_RETRIES = 3
+INGPROGRESS_LABEL = 'inprogress-status'
 
 DEFAULT_ESCALATE_CONSTRAINT = {
     "time_elapsed": DEFAULT_TIME_ELAPSED,
@@ -43,6 +44,17 @@ OWNERSHIP_HIERARCHY = [
     "repo-group-label",
     "repo-group",
     "system-owner"
+]
+
+SNOOZE_LABELS = [
+    "moveto-inprogress-2h",
+    "moveto-inprogress-4h",
+    "moveto-inprogress-6h",
+    "moveto-inprogress-1d",
+    "moveto-inprogress-2d",
+    "moveto-inprogress-3d",
+    "moveto-inprogress-4d",
+    "moveto-inprogress-5d"
 ]
 
 class GitKanban(BaseScript):
@@ -94,6 +106,12 @@ class GitKanban(BaseScript):
             help="create the repo_group labels to the repo in that group"
         )
         ensure_repo_group_labels.set_defaults(func=self.ensure_repo_group_labels)
+
+        # snooze arguments
+        snooze_cmd = subcommands.add_parser('snooze',
+            help="remind the issues after time duration"
+        )
+        snooze_cmd.set_defaults(func=self.snooze)
 
     def send_alert_to_github(self, alert_repo, alert_msg, record=None):
         # send alert to github
@@ -1022,6 +1040,116 @@ class GitKanban(BaseScript):
                         i.add_to_labels(rg_label_name)
 
                 self.log.info('completed_adding_team_label', repo_name=r, repo_group=rg_name)
+
+    def _get_snooze_label_time(self, event_list):
+        # get the snooze label time
+        event_list.reverse()
+        for e in event_list:
+            if e['event'] == "labeled":
+                if e['label']['name'] in SNOOZE_LABELS:
+                    snooze_label_time = e['created_at']
+                    return snooze_label_time
+
+    def get_snooze_label_time(self, issue):
+        events_url = issue['events_url']
+        try:
+            r_obj, event_list = self.make_request(events_url)
+        except TypeError:
+            return
+
+        last_event_page = r_obj.links.get('last', {}).get('url', '')
+        if last_event_page:
+            while True:
+                try:
+                    r_obj, event_list = self.make_request(last_event_page)
+                except TypeError:
+                    break
+
+                snooze_label_time = self._get_snooze_label_time(event_list)
+                if snooze_label_time:
+                    return snooze_label_time
+
+                prev_page = r_obj.links.get('prev', {})
+                if not prev_page:
+                    break
+                else:
+                    last_event_page = prev_page
+        else:
+            return self._get_snooze_label_time(event_list)
+
+    def snooze_label_action(self, issue, repo_name, snooze_label):
+        queues = self.config_json.get('queues', {})
+        queues_list = queues.values()
+
+        issue_labels = [il['name'] for il in issue['labels']]
+        snooze_repo = self.git.get_repo(repo_name)
+        snooze_issue = snooze_repo.get_issue(number=issue['number'])
+        # remove snooze label
+        snooze_issue.remove_from_labels(snooze_label)
+
+        # remove queue label
+        for ql in queues_list:
+            if ql in issue_labels:
+                snooze_issue.remove_from_labels(ql)
+
+        # add inprogress-status label
+        snooze_issue.add_to_labels(INGPROGRESS_LABEL)
+
+    def snooze(self):
+        # get all the repo's from the user specs
+        self.request_count = 0
+        peoples = self.config_json.get('people', {})
+        dc_peoples_list = peoples.keys()
+        final_repo_list = self.get_repo_list()
+        peoples = self.config_json.get('people', {})
+        for repo in final_repo_list:
+            repo_name = repo['repo'].full_name
+            self.repo_group_name = repo['repo_group']
+
+            req_url = ISSUE_URL.format(repo_name)
+            for l in SNOOZE_LABELS:
+                # req a issue url with pagination
+                while True:
+                    try:
+                        params = {"labels": l}
+                        #TODO: check api for multiple label request
+                        resp_obj, issues_list = self.make_request(req_url, params=params)
+                    except TypeError:
+                        break
+
+                    for issue in issues_list:
+                        snooze_time = self.get_snooze_label_time(issue)
+                        if snooze_time:
+                            issue_assignees = [a['login'] for a in issue['assignees']]
+                            for p in issue_assignees:
+                                if p in PEOPLES_BLACKLIST or not p in dc_peoples_list:
+                                    continue
+
+                                people = peoples[p]
+                                #TODO: remove below two if cond
+                                if not people.get('work_hours', {}):
+                                    people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
+                                if not people.get('location', ''):
+                                    people['location'] = self.config_json.get('defaults', {})['location']
+
+                                p_location = people['location']
+                                p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
+                                p_current_time_utc = datetime.datetime.now(timezone(p_timezone)).astimezone(timezone('UTC')).strftime('%Y-%m-%dT%H:%M:%SZ')
+                                time_elapsed = l.split('-')[-1]
+                                if self.calculate_time_constraint(time_elapsed, snooze_time, p_current_time_utc):
+                                    if self.check_person_is_in_work_hours(people):
+                                        #TODO: update label logic
+                                        self.snooze_label_action(issue, repo_name, l)
+                                        self.log.info('got_snooze_alert', issue_url=issue['html_url'])
+
+                    next_page = resp_obj.links.get('next', {})
+                    # req a pagination issue url
+                    if not next_page:
+                        break
+                    else:
+                        req_url = next_page['url']
+
+        self.log.info('total_git_api_req_count', type='metric', count=self.request_count)
 
     def define_baseargs(self, parser):
         super(GitKanban, self).define_baseargs(parser)
