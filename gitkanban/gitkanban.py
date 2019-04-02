@@ -24,7 +24,6 @@ LRU_CACHE_SIZE = 1000
 PEOPLES_BLACKLIST = ["deepcompute-agent", "deep-compute-ops"]
 DEFAULT_TIME_ELAPSED = "2h"
 MAX_RETRIES = 3
-INGPROGRESS_LABEL = 'inprogress-status'
 
 DEFAULT_ESCALATE_CONSTRAINT = {
     "time_elapsed": DEFAULT_TIME_ELAPSED,
@@ -44,17 +43,6 @@ OWNERSHIP_HIERARCHY = [
     "repo-group-label",
     "repo-group",
     "system-owner"
-]
-
-SNOOZE_LABELS = [
-    "moveto-inprogress-2h",
-    "moveto-inprogress-4h",
-    "moveto-inprogress-6h",
-    "moveto-inprogress-1d",
-    "moveto-inprogress-2d",
-    "moveto-inprogress-3d",
-    "moveto-inprogress-4d",
-    "moveto-inprogress-5d"
 ]
 
 class GitKanban(BaseScript):
@@ -1041,16 +1029,16 @@ class GitKanban(BaseScript):
 
                 self.log.info('completed_adding_team_label', repo_name=r, repo_group=rg_name)
 
-    def _get_snooze_label_time(self, event_list):
+    def _get_snooze_label_time(self, event_list, snooze_labels):
         # get the snooze label time
         event_list.reverse()
         for e in event_list:
             if e['event'] == "labeled":
-                if e['label']['name'] in SNOOZE_LABELS:
+                if e['label']['name'] in snooze_labels:
                     snooze_label_time = e['created_at']
                     return snooze_label_time
 
-    def get_snooze_label_time(self, issue):
+    def get_snooze_label_time(self, issue, snooze_labels):
         events_url = issue['events_url']
         try:
             r_obj, event_list = self.make_request(events_url)
@@ -1065,7 +1053,7 @@ class GitKanban(BaseScript):
                 except TypeError:
                     break
 
-                snooze_label_time = self._get_snooze_label_time(event_list)
+                snooze_label_time = self._get_snooze_label_time(event_list, snooze_labels)
                 if snooze_label_time:
                     return snooze_label_time
 
@@ -1093,7 +1081,7 @@ class GitKanban(BaseScript):
                 snooze_issue.remove_from_labels(ql)
 
         # add inprogress-status label
-        snooze_issue.add_to_labels(INGPROGRESS_LABEL)
+        snooze_issue.add_to_labels(queues['in-progress'])
 
     def snooze(self):
         # get all the repo's from the user specs
@@ -1102,12 +1090,13 @@ class GitKanban(BaseScript):
         dc_peoples_list = peoples.keys()
         final_repo_list = self.get_repo_list()
         peoples = self.config_json.get('people', {})
+        snooze_labels = self.config_json.get('defaults', {}).get('snooze_labels', [])
         for repo in final_repo_list:
             repo_name = repo['repo'].full_name
             self.repo_group_name = repo['repo_group']
 
             req_url = ISSUE_URL.format(repo_name)
-            for l in SNOOZE_LABELS:
+            for l in snooze_labels:
                 # req a issue url with pagination
                 while True:
                     try:
@@ -1118,7 +1107,7 @@ class GitKanban(BaseScript):
                         break
 
                     for issue in issues_list:
-                        snooze_time = self.get_snooze_label_time(issue)
+                        snooze_time = self.get_snooze_label_time(issue, snooze_labels)
                         if snooze_time:
                             issue_assignees = [a['login'] for a in issue['assignees']]
                             for p in issue_assignees:
@@ -1126,7 +1115,6 @@ class GitKanban(BaseScript):
                                     continue
 
                                 people = peoples[p]
-                                #TODO: remove below two if cond
                                 if not people.get('work_hours', {}):
                                     people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
                                 if not people.get('location', ''):
@@ -1138,7 +1126,6 @@ class GitKanban(BaseScript):
                                 time_elapsed = l.split('-')[-1]
                                 if self.calculate_time_constraint(time_elapsed, snooze_time, p_current_time_utc):
                                     if self.check_person_is_in_work_hours(people):
-                                        #TODO: update label logic
                                         self.snooze_label_action(issue, repo_name, l)
                                         self.log.info('got_snooze_alert', issue_url=issue['html_url'])
 
