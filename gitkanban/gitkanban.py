@@ -576,9 +576,44 @@ class GitKanban(BaseScript):
             issue_created_at = parser.parse(issue_created_at).replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
             return issue_created_at
 
+    def calculate_time_constraint(self, time_constraint, issue_created_at, p_current_time_utc, people=None):
+        if 'eod' in time_constraint:
+            current_hour = parser.parse(p_current_time_utc).time().hour
+            assert people, "people should not be empty"
+            pwh_end = int(people['work_hours']['end'].split(':')[0])
+            p_location = people['location']
+            p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
+            pwh_end_utc = datetime.datetime.now(timezone(p_timezone)).replace(hour=pwh_end).astimezone(timezone('UTC')).hour
+            return (current_hour >= (pwh_end_utc - 1)) # before 1hr work hours end
 
-    def calculate_time_constraint(self, time_constraint, issue_created_at, p_current_time_utc):
-        if 'd' in time_constraint:
+        elif 'eow' in time_constraint:
+            current_weekday = parser.parse(p_current_time_utc).weekday()
+            return (4 >= current_weekday)
+
+        elif 'eom' in time_constraint:
+            current_date = parser.parse(p_current_time_utc).day
+            current_year = parser.parse(p_current_time_utc).year
+            current_month = parser.parse(p_current_time_utc).month
+            eom_date = calendar.monthrange(current_year, current_month)[1]
+            if calendar.day_name[calendar.weekday(current_year, current_month, eom_date)] == "Saturday":
+                eom_date -= 1
+            elif calendar.day_name[calendar.weekday(current_year, current_month, eom_date)] == "Sunday":
+                eom_date -= 1
+                eom_date -= 1
+            return (current_date >= eom_date)
+
+        elif 'w' in time_constraint:
+            weeks, _ = time_constraint.split('w')
+            c_days = int(weeks) * 7
+            diff_time = relativedelta(parser.parse(p_current_time_utc), parser.parse(issue_created_at))
+            return (diff_time.days >= c_days)
+
+        elif 'm' in time_constraint:
+            months, _ = time_constraint.split('m')
+            diff_time = relativedelta(parser.parse(p_current_time_utc), parser.parse(issue_created_at))
+            return (diff_time.months >= int(months))
+
+        elif 'd' in time_constraint:
             days, _ = time_constraint.split('d')
             c_hours = int(days) * 24
         elif 'h' in time_constraint:
@@ -1063,7 +1098,7 @@ class GitKanban(BaseScript):
                 else:
                     last_event_page = prev_page
         else:
-            return self._get_snooze_label_time(event_list)
+            return self._get_snooze_label_time(event_list, snooze_labels)
 
     def snooze_label_action(self, issue, repo_name, snooze_label):
         queues = self.config_json.get('queues', {})
@@ -1124,7 +1159,7 @@ class GitKanban(BaseScript):
                                 p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
                                 p_current_time_utc = datetime.datetime.now(timezone(p_timezone)).astimezone(timezone('UTC')).strftime('%Y-%m-%dT%H:%M:%SZ')
                                 time_elapsed = l.split('-')[-1]
-                                if self.calculate_time_constraint(time_elapsed, snooze_time, p_current_time_utc):
+                                if self.calculate_time_constraint(time_elapsed, snooze_time, p_current_time_utc, people=people):
                                     if self.check_person_is_in_work_hours(people):
                                         self.snooze_label_action(issue, repo_name, l)
                                         self.log.info('got_snooze_alert', issue_url=issue['html_url'])
