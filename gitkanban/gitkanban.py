@@ -1125,7 +1125,7 @@ class GitKanban(BaseScript):
         dc_peoples_list = peoples.keys()
         final_repo_list = self.get_repo_list()
         peoples = self.config_json.get('people', {})
-        snooze_labels = self.config_json.get('defaults', {}).get('snooze_labels', [])
+        snooze_labels = self.config_json.get('snooze_labels', [])
         for repo in final_repo_list:
             repo_name = repo['repo'].full_name
             self.repo_group_name = repo['repo_group']
