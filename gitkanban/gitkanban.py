@@ -641,7 +641,7 @@ class GitKanban(BaseScript):
                 r_obj, data = self.make_request(u)
                 last_page = r_obj.links.get('last', {}).get('url', '')
                 if last_page:
-                    com_res_obj, data = self.make_request(last_page, params)
+                    com_res_obj, data = self.make_request(last_page)
             except TypeError:
                 return
             if data:
@@ -669,7 +669,7 @@ class GitKanban(BaseScript):
                 res_obj, data = self.make_request(comments_url)
                 last_page = res_obj.links.get('last', {}).get('url', '')
                 if last_page:
-                    com_res_obj, data = self.make_request(last_page, params)
+                    com_res_obj, data = self.make_request(last_page)
             except TypeError:
                 return False
 
