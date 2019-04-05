@@ -207,7 +207,8 @@ class GitKanban(BaseScript):
 
         if not peoples_list:
             # send alert msg to assignees
-            msg = "{}".format(follow_up['message'])
+            assignees_list = record['person'].split(',')
+            msg = "{} @{}".format(follow_up['message'], ', @'.join(assignees_list))
             get_alert_issue.create_comment(body=msg)
             self.log.info('send_alert_to_assignees')
             # insert record to failed check table
