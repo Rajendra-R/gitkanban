@@ -1,20 +1,21 @@
 import sys
 import json
 import os
-import requests
 import datetime
-import dateutil
 import calendar
 import hashlib
 import copy
+
+import requests
+import dateutil
 from pytz import timezone
 from dateutil import parser
-from dateutil.relativedelta import relativedelta
-
 from pylru import lrucache
 from github import Github, GithubException
+from dateutil.relativedelta import relativedelta
 
 from basescript import BaseScript
+
 from .constraints_state import ConstraintsStateDB
 from .exceptions import *
 
@@ -352,60 +353,92 @@ class GitKanban(BaseScript):
                 label_edited=label_edited_count,
             )
 
-    def get_people(self, repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list, ownership):
-        # prepare label separation for each issue
+    def get_issue_queue_index(self, repo_name, issue, queues_list, repo_groups, ownership):
+        # prepare label separation for each issue based on ownership
         # if issue has "next", "bug-type" labels
         # if that repo is present in our repo_group
         # -> ["queue:next", "label:bug-type", "repo:gitchecking/third", "repo_group:group1"]
+        rgl = self.config_json.get('repo_group_labels', {})
+        rg_labels = []
+        for k, v in rgl.items():
+            rg_labels.append(v['name'])
+        if 'repo-group' in ownership:
+            split_count = (ownership.count('-') - 1)
+            ownership_keys = ownership.rsplit('-', split_count)
+        else:
+            ownership_keys = ownership.split('-')
+
         issue_labels = [l['name'] for l in issue['labels']]
+        issue_keys = []
+        for k in ownership_keys:
+            if k == 'repo':
+                issue_keys.append("repo:{}".format(repo_name))
+            elif k == 'repo-group':
+                for rn, rv in repo_groups.items():
+                    if repo_name in [r['repo'].full_name for r in rv]:
+                        issue_keys.append('repo-group:{}'.format(rn))
+            elif k == 'queue':
+                for l in issue_labels:
+                    if l in queues_list:
+                        issue_keys.append("queue:{}".format(l))
+            else:
+                issue_rg_labels = []
+                for l in issue_labels:
+                    if l in queues_list:
+                        continue
+                    if not l in rg_labels:
+                        continue
+                    issue_rg_labels.append("label:{}".format(l))
+
+                if issue_rg_labels:
+                    if len(issue_rg_labels) > 1:
+                        self.log.exception('got_multiple_repo_group_label_for_an_issue', issue_url=issue['html_url'])
+
+                    issue_keys.append(issue_rg_labels[0])
+
+        return issue_keys
+
+    def get_people(self, repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list, ownership):
         issue_assignees = [a['login'] for a in issue['assignees']]
         # if pull request has reviewers
         pr_reviewers = [r['login'] for r in issue.get('requested_reviewers', [])]
         issue_assignees.extend(pr_reviewers)
 
-        check_issue_index = []
-        for l in issue_labels:
-            if l in queues_list:
-                key = "queue:{}".format(l)
-            else:
-                key = "label:{}".format(l)
-            check_issue_index.append(key)
-
-        check_issue_index.append("repo:{}".format(repo_name))
-
-        for rn, rv in repo_groups.items():
-            if repo_name in [r['repo'].full_name for r in rv]:
-                check_issue_index.append('repo_group:{}'.format(rn))
-
-        # get all the ownership indexes from the config file of a issue
-        issue_ownership_index = []
-        for c in check_issue_index:
-            issue_ownership_index.append(ownership_index.get(c, None))
-
-        issue_ownership_index = list(filter(None, issue_ownership_index)) # [{0,1,2}, {1,2}, {2,3}]
-
-        issue_ownership_intersection = set()
-        if issue_ownership_index:
-            issue_ownership_intersection = set.intersection(*issue_ownership_index) # {2}
-
-        # get ownership dic of a index from the config ownership [{}, {}]
-        final_ownership_list = []
-        for p in issue_ownership_intersection:
-            final_ownership_list.append(ownership_list[p])
-
-        # get the selected people from the config ownership based on issue
         ownership_people = {}
-        for op in final_ownership_list:
-            #TODO: if we miss order the keys in the config file
-            key = '-'.join([k.replace('_', '-') for k in op.keys() if not k == 'people'])
-            ownership_people[key] = op['people']
+        if ownership == 'assignees':
+            # add assignees of a issue
+            if issue_assignees:
+                ownership_people['assignees'] = issue_assignees
+        elif ownership == 'system-owner':
+            # add system_owner
+            ownership_people['system-owner'] = self.system_owners
+        else:
+            check_issue_index = self.get_issue_queue_index(repo_name, issue, queues_list, repo_groups, ownership)
 
-        # add assignees of a issue
-        if issue_assignees:
-            ownership_people['assignees'] = issue_assignees
+            # get all the ownership indexes from the config file of a issue
+            issue_ownership_index = []
+            for c in check_issue_index:
+                issue_ownership_index.append(ownership_index.get(c, None))
 
-        # add system_owner
-        ownership_people['system-owner'] = self.system_owners
+            issue_ownership_index = list(filter(None, issue_ownership_index)) # [{0,1,2}, {1,2}, {2,3}]
+
+            if len(check_issue_index) != len(issue_ownership_index):
+                issue_ownership_index = []
+
+            issue_ownership_intersection = set()
+            if issue_ownership_index:
+                issue_ownership_intersection = set.intersection(*issue_ownership_index) # {2}
+
+            # get ownership dic of a index from the config ownership [{}, {}]
+            final_ownership_list = []
+            for p in issue_ownership_intersection:
+                final_ownership_list.append(ownership_list[p])
+
+            # get the selected people from the config ownership based on issue
+            for op in final_ownership_list:
+                #TODO: if we miss order the keys in the config file
+                key = '-'.join([k.replace('_', '-') for k in op.keys() if not k == 'people'])
+                ownership_people[key] = op['people']
 
         # get the people based on our ownership hierarchy
         people = ()
@@ -454,7 +487,7 @@ class GitKanban(BaseScript):
         # check response form the cache.
         if already_requested:
             resp_obj, data = self.lru[_id]
-            self.log.info('get_response_from_cache', url=url, params=params)
+            self.log.info('got_response_from_cache', url=url)
             return (resp_obj, data)
 
         try:
@@ -463,7 +496,10 @@ class GitKanban(BaseScript):
                     resp_obj = requests.get(url, params=params)
                     data = resp_obj.json()
                     if resp_obj.status_code == 502:
-                        self.log.exception("retry_a_url", retry_count=retry_count, data=data, url=url, params=params)
+                        self.log.exception("retry_a_url", retry_count=retry_count,
+                            data=data, url=url,
+                            labels=params.get('labels', '')
+                        )
                         self.request_count += 1
                         retry_count += 1
                     else:
@@ -476,18 +512,18 @@ class GitKanban(BaseScript):
                 self.log.exception("github_api_rate_limit_exceeded", data=resp_obj.headers)
                 sys.exit(1)
             elif resp_obj.status_code == 404:
-                self.log.exception("no_data_found", data=data, url=url, params=params)
+                self.log.exception("no_data_found", data=data, url=url)
                 return
             elif resp_obj.status_code == 502:
                 self.log.exception("got_github_server_error_after_max_retries",
-                    retry_count=retry_count, data=data, url=url, params=params
+                    retry_count=retry_count, data=data, url=url
                 )
                 return
             elif resp_obj.status_code == 422:
-                self.log.exception("got_invalid_fields", data=data, url=url, params=params)
+                self.log.exception("got_invalid_fields", data=data, url=url)
                 return
             self.request_count += 1
-            self.log.info('successfully_reqested_a_url', url=url, params=params)
+            self.log.info('successfully_requested_a_url', url=url)
         except Exception as e:
             self.log.exception('not_able_to_request', url=url, error=e)
 
@@ -700,7 +736,7 @@ class GitKanban(BaseScript):
             for k, v in o.items():
                 if k == "people":
                     continue
-                key = "{}:{}".format(k,v)
+                key = "{}:{}".format(k.replace('_', '-'), v)
                 if key in ownership_index.keys():
                     ownership_index[key].add(index)
                 else:
