@@ -1,4 +1,3 @@
-import os
 import sqlite3
 
 TABLE_NAME = 'failed_checks'
