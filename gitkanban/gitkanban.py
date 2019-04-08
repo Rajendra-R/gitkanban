@@ -103,15 +103,53 @@ class GitKanban(BaseScript):
         )
         snooze_cmd.set_defaults(func=self.snooze)
 
-    def send_alert_to_github(self, alert_repo, alert_msg, record=None):
+    def update_alert_issue_with_issue_assignees(self, alert_repo, record, peoples_list, alert_msg):
+        existed_names = record['person'].split(',')
+        remove_p_list = []
+        for ep in existed_names:
+            if ep not in peoples_list:
+                remove_p_list.append(ep)
+
+        get_alert_issue = alert_repo.get_issue(number=record['alert_issue_id'])
+        for rp in remove_p_list:
+            if get_alert_issue.state == "open":
+                get_alert_issue.remove_from_assignees(rp)
+            existed_names.remove(rp)
+
+        if not existed_names:
+            self.close_alert_to_github(alert_repo, alert_msg, record)
+            return
+
+        p_names = ','.join(existed_names)
+        if remove_p_list:
+            # insert record to failed check table
+            self.constraints_db.insert_failed_check(
+                record['constraint_name'],
+                p_names,
+                record['issue_url'],
+                record['datetime'],
+                record['alert_issue_id'],
+                record['escalation_hierarchy']
+            )
+            self.log.info("remove_assignee_to_existing_alert", p_names=remove_p_list)
+
+        if existed_names:
+            return p_names.split(',')
+        else:
+            return
+
+    def send_alert_to_github(self, alert_repo, alert_msg, record=None, peoples_list=None):
         # send alert to github
         try:
             if record:
+                existed_names = self.update_alert_issue_with_issue_assignees(alert_repo, record, peoples_list, alert_msg)
                 get_alert_issue = alert_repo.get_issue(number=record['alert_issue_id'])
                 if get_alert_issue.state == "closed":
-                    get_alert_issue.edit(state="open")
-                    self.log.info("re_open_manually_closed_alert", alert_url=get_alert_issue.url)
-                existed_names = record['person'].split(',')
+                    if existed_names:
+                        get_alert_issue.edit(state="open")
+                        self.log.info("re_open_manually_closed_alert", alert_url=get_alert_issue.url)
+                    else:
+                        return
                 if alert_msg['person_name'] in existed_names:
                     return
                 get_alert_issue.add_to_assignees(alert_msg['person_name'])
@@ -190,7 +228,7 @@ class GitKanban(BaseScript):
             else:
                 self.log.exception('github_api_call_failed_while_closing_alert', error=e)
 
-    def send_escalation_to_alert_issue(self, alert_repo, follow_up, record, peoples_list=None, own_hi=None):
+    def send_escalation_to_alert_issue(self, alert_repo, follow_up, record, pe_list=None, own_hi=None):
         get_alert_issue = alert_repo.get_issue(number=record['alert_issue_id'])
         if get_alert_issue.state == "closed":
             get_alert_issue.edit(state="open")
@@ -207,7 +245,7 @@ class GitKanban(BaseScript):
 
             get_alert_issue.add_to_labels(new_label)
 
-        if not peoples_list:
+        if not pe_list:
             # send alert msg to assignees
             assignees_list = record['person'].split(',')
             msg = "{} @{}".format(follow_up['message'], ', @'.join(assignees_list))
@@ -231,11 +269,11 @@ class GitKanban(BaseScript):
             return
 
         # send escalation msg to alert issue
-        msg = "{}\n**Note:** @{}".format(follow_up['message'], ', @'.join(peoples_list))
+        msg = "{}\n**Note:** @{}".format(follow_up['message'], ', @'.join(pe_list))
         get_alert_issue.create_comment(body=msg)
         # add escalate persons to assignees
         existed_names = record['person'].split(',')
-        for p in peoples_list:
+        for p in pe_list:
             if p in existed_names:
                 continue
             get_alert_issue.add_to_assignees(p)
@@ -907,7 +945,9 @@ class GitKanban(BaseScript):
                             )
                             if record:
                                 already_alert.append("{}:{}:{}".format(co['name'], record['person'], issue_url))
-                                self.send_alert_to_github(alert_repo, alert_msg, record)
+                                if check_alert_issues:
+                                    peoples_list = [a['login'] for a in issue['assignees']]
+                                self.send_alert_to_github(alert_repo, alert_msg, record, peoples_list)
                                 # escalation logic
                                 last_alert_time = record['datetime']
                                 last_escalation = record['escalation_hierarchy']
