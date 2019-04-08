@@ -5,6 +5,7 @@ import datetime
 import calendar
 import hashlib
 import copy
+import re
 
 import requests
 import dateutil
@@ -22,9 +23,9 @@ from .exceptions import *
 TIMESTAMP_NOW = lambda : datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 ISSUE_URL = 'https://api.github.com/repos/{}/issues'
 LRU_CACHE_SIZE = 1000
-PEOPLES_BLACKLIST = ["deepcompute-agent", "deep-compute-ops"]
 DEFAULT_TIME_ELAPSED = "2h"
 MAX_RETRIES = 3
+CHECK_SNOOZE_TIME = re.compile(r'^\d')
 
 DEFAULT_ESCALATE_CONSTRAINT = {
     "time_elapsed": DEFAULT_TIME_ELAPSED,
@@ -757,6 +758,7 @@ class GitKanban(BaseScript):
         queues_list = queues.values()
         peoples = self.config_json.get('people', {})
         dc_peoples_list = peoples.keys()
+        peoples_blacklist = self.config_json.get('defaults', {}).get('peoples_blacklist', [])
         repo_groups = self.config_json.get('repo_groups', {})
         # get the alert repo
         alert_repo = self.git.get_repo(self.args.alert_repo)
@@ -860,7 +862,7 @@ class GitKanban(BaseScript):
                         ownership = "assignees"
                         own_hi, peoples_list = self.get_people(repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list, ownership)
                     for p in peoples_list:
-                        if p in PEOPLES_BLACKLIST or not p in dc_peoples_list:
+                        if p in peoples_blacklist or not p in dc_peoples_list:
                             continue
 
                         people = peoples[p]
@@ -1101,21 +1103,22 @@ class GitKanban(BaseScript):
 
                 self.log.info('completed_adding_team_label', repo_name=r, repo_group=rg_name)
 
-    def _get_snooze_label_time(self, event_list, snooze_labels):
+    def _get_snooze_label_time(self, event_list, snooze_labels_list):
         # get the snooze label time
         event_list.reverse()
         for e in event_list:
             if e['event'] == "labeled":
-                if e['label']['name'] in snooze_labels:
+                if e['label']['name'] in snooze_labels_list:
                     snooze_label_time = e['created_at']
-                    return snooze_label_time
+                    label_person = e['actor']['login']
+                    return (label_person, snooze_label_time)
 
-    def get_snooze_label_time(self, issue, snooze_labels):
+    def get_snooze_label_time(self, issue, snooze_labels_list):
         events_url = issue['events_url']
         try:
             r_obj, event_list = self.make_request(events_url)
         except TypeError:
-            return
+            return (None, None)
 
         last_event_page = r_obj.links.get('last', {}).get('url', '')
         if last_event_page:
@@ -1125,9 +1128,9 @@ class GitKanban(BaseScript):
                 except TypeError:
                     break
 
-                snooze_label_time = self._get_snooze_label_time(event_list, snooze_labels)
+                label_person, snooze_label_time = self._get_snooze_label_time(event_list, snooze_labels_list)
                 if snooze_label_time:
-                    return snooze_label_time
+                    return (label_person, snooze_label_time)
 
                 prev_page = r_obj.links.get('prev', {})
                 if not prev_page:
@@ -1135,7 +1138,7 @@ class GitKanban(BaseScript):
                 else:
                     last_event_page = prev_page
         else:
-            return self._get_snooze_label_time(event_list, snooze_labels)
+            return self._get_snooze_label_time(event_list, snooze_labels_list)
 
     def snooze_label_action(self, issue, repo_name, snooze_label):
         queues = self.config_json.get('queues', {})
@@ -1159,10 +1162,12 @@ class GitKanban(BaseScript):
         # get all the repo's from the user specs
         self.request_count = 0
         peoples = self.config_json.get('people', {})
+        peoples_blacklist = self.config_json.get('defaults', {}).get('peoples_blacklist', [])
         dc_peoples_list = peoples.keys()
         final_repo_list = self.get_repo_list()
         peoples = self.config_json.get('people', {})
         snooze_labels = self.config_json.get('snooze_labels', [])
+        snooze_labels_list = [i['name'] for i in snooze_labels]
         for repo in final_repo_list:
             repo_name = repo['repo'].full_name
             self.repo_group_name = repo['repo_group']
@@ -1170,23 +1175,33 @@ class GitKanban(BaseScript):
             req_url = ISSUE_URL.format(repo_name)
             for l in snooze_labels:
                 # req a issue url with pagination
+                l_name = l['name']
+                l_time = l['time']
                 while True:
                     try:
-                        params = {"labels": l}
+                        params = {"labels": l_name}
                         #TODO: check api for multiple label request
                         resp_obj, issues_list = self.make_request(req_url, params=params)
                     except TypeError:
                         break
 
                     for issue in issues_list:
-                        snooze_time = self.get_snooze_label_time(issue, snooze_labels)
+                        label_person, snooze_time = self.get_snooze_label_time(issue, snooze_labels_list)
                         if snooze_time:
-                            issue_assignees = [a['login'] for a in issue['assignees']]
-                            for p in issue_assignees:
-                                if p in PEOPLES_BLACKLIST or not p in dc_peoples_list:
+                            time_elapsed = l_time
+                            check_time = CHECK_SNOOZE_TIME.match(l_time)
+                            if check_time:
+                                # for 1m, 1d, 1h, 1w cases
+                                current_time_utc = datetime.datetime.now(timezone('UTC')).strftime('%Y-%m-%dT%H:%M:%SZ')
+                                if self.calculate_time_constraint(time_elapsed, snooze_time, current_time_utc):
+                                    self.snooze_label_action(issue, repo_name, l_name)
+                                    self.log.info('got_snooze_alert', issue_url=issue['html_url'])
+                            else:
+                                # for eod, eow, eom cases
+                                if label_person in peoples_blacklist or not label_person in dc_peoples_list:
                                     continue
 
-                                people = peoples[p]
+                                people = peoples[label_person]
                                 if not people.get('work_hours', {}):
                                     people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
                                 if not people.get('location', ''):
@@ -1195,10 +1210,9 @@ class GitKanban(BaseScript):
                                 p_location = people['location']
                                 p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
                                 p_current_time_utc = datetime.datetime.now(timezone(p_timezone)).astimezone(timezone('UTC')).strftime('%Y-%m-%dT%H:%M:%SZ')
-                                time_elapsed = l.split('-')[-1]
                                 if self.calculate_time_constraint(time_elapsed, snooze_time, p_current_time_utc, people=people):
                                     if self.check_person_is_in_work_hours(people):
-                                        self.snooze_label_action(issue, repo_name, l)
+                                        self.snooze_label_action(issue, repo_name, l_name)
                                         self.log.info('got_snooze_alert', issue_url=issue['html_url'])
 
                     next_page = resp_obj.links.get('next', {})
