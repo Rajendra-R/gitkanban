@@ -11,7 +11,8 @@ setup(
         "python-dateutil==2.8.0",
         "requests==2.20.1",
         "pylru==1.1.0",
-        "pytz==2018.3"
+        "pytz==2018.3",
+        "numpy==1.16.2"
     ],
     author="deep-compute",
     author_email="contact@deepcompute.com",

@@ -6,7 +6,9 @@ import calendar
 import hashlib
 import copy
 import re
+from datetime import timedelta
 
+import numpy as np
 import requests
 import dateutil
 from pytz import timezone
@@ -626,6 +628,16 @@ class GitKanban(BaseScript):
         pwh_end_utc_hours = parser.parse(self.pwh_end_utc).hour
         pwh_end_utc_minute = parser.parse(self.pwh_end_utc).minute
 
+        # check last comment on weekends working hours move to monday working hours.
+        issue_created_at_obj = parser.parse(issue_created_at)
+        # Should not consider weekends.
+        if calendar.day_name[issue_created_at_obj.date().weekday()] == "Saturday":
+            issue_created_at_obj += datetime.timedelta(days=1)
+            issue_created_at_obj += datetime.timedelta(days=1)
+        elif calendar.day_name[issue_created_at_obj.date().weekday()] == "Sunday":
+            issue_created_at_obj += datetime.timedelta(days=1)
+        issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
+
         # issue updated at UTC time
         isu_hour = parser.parse(issue_created_at).hour
         isu_minute = parser.parse(issue_created_at).minute
@@ -651,6 +663,57 @@ class GitKanban(BaseScript):
             # if issue date is before the working hours start
             issue_created_at = parser.parse(issue_created_at).replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
             return issue_created_at
+
+    def calculate_working_hours(self, issue_created_at, p_current_time_utc, people):
+        # calculate total working hours per day
+        pwh_start_h, pwh_start_m = people['work_hours']['start'].split(':')
+        pwh_end_h, pwh_end_m = people['work_hours']['end'].split(':')
+        diff = relativedelta(datetime.datetime.now().replace(hour=int(pwh_end_h), minute=int(pwh_end_m)), datetime.datetime.now().replace(hour=int(pwh_start_h), minute=int(pwh_start_m)))
+        total_pwh = diff.hours
+        if diff.minutes == 59:
+            total_pwh += 1
+
+        start = parser.parse(issue_created_at).date() # 2019-01-01T10:00:37Z
+        end = parser.parse(p_current_time_utc).date() # 2019-01-05T15:00:37Z
+        # get the dates between start and end
+        # [2014-01-01T10:00:37Z, 2014-01-02T00:00:00Z, 2014-01-03T00:00:00Z, 2014-01-04T00:00:00Z, 2014-01-05T15:00:37Z]
+        total_dates = [(start + timedelta(n)).strftime('%Y-%m-%dT%H:%M:%SZ') for n in range(int ((end - start).days)+1)]
+        total_hours = 0
+        if len(total_dates) >= 2:
+            #TODO: avoid code duplication
+            # first date
+            total_dates[0] = issue_created_at
+            first_date_obj = parser.parse(issue_created_at)
+            diff = relativedelta(first_date_obj.replace(hour=int(pwh_end_h), minute=int(pwh_end_m)), first_date_obj)
+            hours = diff.hours
+            if diff.minutes == 59:
+                hours += 1
+            total_hours = hours
+
+            # last date
+            total_dates[-1] = p_current_time_utc
+            last_date_obj = parser.parse(p_current_time_utc)
+            if not calendar.day_name[last_date_obj.date().weekday()] in ["Saturday", "Sunday"]:
+                diff = relativedelta(last_date_obj, last_date_obj.replace(hour=int(pwh_start_h), minute=int(pwh_start_m)))
+                total_hours += diff.hours
+                if diff.minutes == 59:
+                    total_hours += 1
+        else:
+            total_dates[0] = issue_created_at
+            first_date_obj = parser.parse(issue_created_at)
+            diff = relativedelta(first_date_obj.replace(hour=int(pwh_end_h), minute=int(pwh_end_m)), first_date_obj)
+            hours = diff.hours
+            if diff.minutes == 59:
+                hours += 1
+            total_hours = hours
+
+        # calculate for middle dates
+        for d in total_dates[1:-1]:
+            if calendar.day_name[parser.parse(d).date().weekday()] in ["Saturday", "Sunday"]:
+                continue
+            total_hours += total_pwh
+
+        return total_hours
 
     def calculate_time_constraint(self, time_constraint, issue_created_at, p_current_time_utc, people=None):
         if 'eod' in time_constraint:
@@ -691,21 +754,28 @@ class GitKanban(BaseScript):
 
         elif 'd' in time_constraint:
             days, _ = time_constraint.split('d')
-            c_hours = int(days) * 24
+            # skip saturday and sunday
+            diff_days = int(np.busday_count(parser.parse(issue_created_at).date(), parser.parse(p_current_time_utc).date()))
+            return (diff_days >= int(days))
+
         elif 'h' in time_constraint:
             c_hours, _ = time_constraint.split('h')
+            if people:
+                diff_hours = self.calculate_working_hours(issue_created_at, p_current_time_utc, people)
+                return (diff_hours >= int(c_hours))
+            else:
+                # for snooze feature
+                diff_time = relativedelta(parser.parse(p_current_time_utc), parser.parse(issue_created_at))
+                months = diff_time.months
+                days = diff_time.days
+                hours = diff_time.hours
+
+                #TODO: check year, months having 31, holidays, leapyear,..
+                total_hours = int(((months * 30) * 24) + (days * 24) + hours)
+                return (total_hours >= int(c_hours))
         else:
             self.log.error('invalid_time_constraint', constraint_time=time_constraint)
             return False
-
-        diff_time = relativedelta(parser.parse(p_current_time_utc), parser.parse(issue_created_at))
-        months = diff_time.months
-        days = diff_time.days
-        hours = diff_time.hours
-
-        #TODO: check year, months having 31, holidays, leapyear,..
-        total_hours = int(((months * 30) * 24) + (days * 24) + hours)
-        return (total_hours >= int(c_hours))
 
     def get_pr_recent_time(self, issue):
         pr_cm_co_dates = []
@@ -760,7 +830,7 @@ class GitKanban(BaseScript):
 
         # based on our custom timezone logic of a person change the issue created time
         issue_created_at = self.get_issue_created_datetime(issue_created_at, people)
-        return self.calculate_time_constraint(time_constraint, issue_created_at, self.p_current_time_utc)
+        return self.calculate_time_constraint(time_constraint, issue_created_at, self.p_current_time_utc, people)
 
     def check_constraints(self):
         # prepare owndership index from the given config file
@@ -970,7 +1040,7 @@ class GitKanban(BaseScript):
                                         p_location = people['location']
                                         p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
                                         p_current_time_utc = datetime.datetime.now(timezone(p_timezone)).astimezone(timezone('UTC')).strftime('%Y-%m-%dT%H:%M:%SZ')
-                                        if self.calculate_time_constraint(time_elapsed, last_alert_time, p_current_time_utc):
+                                        if self.calculate_time_constraint(time_elapsed, last_alert_time, p_current_time_utc, people):
                                             if self.check_person_is_in_work_hours(people):
                                                 self.send_escalation_to_alert_issue(alert_repo, v, record)
                                                 alert_done = True
@@ -1013,7 +1083,7 @@ class GitKanban(BaseScript):
                                             p_location = _people['location']
                                             p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
                                             p_current_time_utc = datetime.datetime.now(timezone(p_timezone)).astimezone(timezone('UTC')).strftime('%Y-%m-%dT%H:%M:%SZ')
-                                            if self.calculate_time_constraint(time_elapsed, last_alert_time, p_current_time_utc):
+                                            if self.calculate_time_constraint(time_elapsed, last_alert_time, p_current_time_utc, _people):
                                                 if self.check_person_is_in_work_hours(_people):
                                                     self.send_escalation_to_alert_issue(alert_repo, f, record, pe_list, own_hi)
                                                     escalation_done = True
