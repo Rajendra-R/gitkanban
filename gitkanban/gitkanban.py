@@ -634,9 +634,10 @@ class GitKanban(BaseScript):
         if calendar.day_name[issue_created_at_obj.date().weekday()] == "Saturday":
             issue_created_at_obj += datetime.timedelta(days=1)
             issue_created_at_obj += datetime.timedelta(days=1)
+            issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
         elif calendar.day_name[issue_created_at_obj.date().weekday()] == "Sunday":
             issue_created_at_obj += datetime.timedelta(days=1)
-        issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
+            issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
 
         # issue updated at UTC time
         isu_hour = parser.parse(issue_created_at).hour
@@ -679,6 +680,15 @@ class GitKanban(BaseScript):
         # [2014-01-01T10:00:37Z, 2014-01-02T00:00:00Z, 2014-01-03T00:00:00Z, 2014-01-04T00:00:00Z, 2014-01-05T15:00:37Z]
         total_dates = [(start + timedelta(n)).strftime('%Y-%m-%dT%H:%M:%SZ') for n in range(int ((end - start).days)+1)]
         total_hours = 0
+        if not total_dates:
+            diff_time = relativedelta(parser.parse(p_current_time_utc), parser.parse(issue_created_at))
+            months = diff_time.months
+            days = diff_time.days
+            hours = diff_time.hours
+
+            #TODO: check year, months having 31, holidays, leapyear,..
+            total_hours = int(((months * 30) * 24) + (days * 24) + hours)
+            return total_hours
         if len(total_dates) >= 2:
             #TODO: avoid code duplication
             # first date
@@ -701,7 +711,7 @@ class GitKanban(BaseScript):
         else:
             total_dates[0] = issue_created_at
             first_date_obj = parser.parse(issue_created_at)
-            diff = relativedelta(first_date_obj.replace(hour=int(pwh_end_h), minute=int(pwh_end_m)), first_date_obj)
+            diff = relativedelta(parser.parse(p_current_time_utc), first_date_obj)
             hours = diff.hours
             if diff.minutes == 59:
                 hours += 1
