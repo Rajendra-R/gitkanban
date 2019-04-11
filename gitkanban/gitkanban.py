@@ -1097,7 +1097,9 @@ class GitKanban(BaseScript):
                                                 if self.check_person_is_in_work_hours(_people):
                                                     self.send_escalation_to_alert_issue(alert_repo, f, record, pe_list, own_hi)
                                                     escalation_done = True
-                                        if escalation_done:
+                                        # if escalation happend should not go further
+                                        # if we got escalation people but not in work_hours/constraint fails, break it.
+                                        if escalation_done or pe_list:
                                             break
                             else:
                                 self.send_alert_to_github(alert_repo, alert_msg)
