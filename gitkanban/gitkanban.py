@@ -67,6 +67,16 @@ class GitKanban(BaseScript):
             with open(self.args.config_file) as f:
                 self.config_json = json.loads(f.read())
 
+        # location based public holidays list
+        self.public_holidays_list = {}
+        locations = self.config_json.get('locations', {})
+        for l, v in locations.items():
+            holidays = v.get('holidays', [])
+            loc_holidays = {}
+            for h in holidays:
+                loc_holidays[h['name']] = h['date']
+            self.public_holidays_list[l] = loc_holidays
+
         self.lru = lrucache(LRU_CACHE_SIZE)
 
     def define_subcommands(self, subcommands):
@@ -585,6 +595,15 @@ class GitKanban(BaseScript):
 
         # convert person timezone current time to UTC timezone
         p_current_time = datetime.datetime.now(timezone(p_timezone))
+
+        #check person date is in public holidays or not
+        public_holidays = self.public_holidays_list.get(p_location, {})
+        p_current_date = p_current_time.date().strftime('%d-%m-%Y')
+        for h, d in public_holidays.items():
+            if p_current_date == d:
+                self.log.info('public_holiday_alert_cancled', holiday=h)
+                return False
+
         # check the current date in weekend
         if calendar.day_name[p_current_time.date().weekday()] in ["Saturday", "Sunday"]:
             return False
@@ -1098,7 +1117,7 @@ class GitKanban(BaseScript):
                                                     self.send_escalation_to_alert_issue(alert_repo, f, record, pe_list, own_hi)
                                                     escalation_done = True
                                         # if escalation happend should not go further
-                                        # if we got escalation people but not in work_hours/constraint fails, break it.
+                                        # if we got escalation people but not in work_hours/constraint is not true, break it.
                                         if escalation_done or pe_list:
                                             break
                             else:
