@@ -119,8 +119,9 @@ class GitKanban(BaseScript):
         existed_names = record['person'].split(',')
         remove_p_list = []
         for ep in existed_names:
-            if ep not in peoples_list and not in esc_people:
-                remove_p_list.append(ep)
+            if ep not in peoples_list:
+                if ep not in esc_people:
+                    remove_p_list.append(ep)
 
         get_alert_issue = alert_repo.get_issue(number=record['alert_issue_id'])
         for rp in remove_p_list:
@@ -1058,7 +1059,7 @@ class GitKanban(BaseScript):
                                     )
                                     if pe_list:
                                         esc_people.extend(pe_list)
-                                esc_people = list(dict.fromkeys(l))
+                                esc_people = list(dict.fromkeys(esc_people))
 
                                 if check_alert_issues:
                                     peoples_list = [a['login'] for a in issue['assignees']]
