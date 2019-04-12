@@ -1254,6 +1254,8 @@ class GitKanban(BaseScript):
                     label_person = e['actor']['login']
                     return (label_person, snooze_label_time)
 
+        return (None, None)
+
     def get_snooze_label_time(self, issue, snooze_labels_list):
         events_url = issue['events_url']
         try:
@@ -1269,9 +1271,7 @@ class GitKanban(BaseScript):
                 except TypeError:
                     break
 
-                label_person, snooze_label_time = self._get_snooze_label_time(event_list, snooze_labels_list)
-                if snooze_label_time:
-                    return (label_person, snooze_label_time)
+                return self._get_snooze_label_time(event_list, snooze_labels_list)
 
                 prev_page = r_obj.links.get('prev', {})
                 if not prev_page:
