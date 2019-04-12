@@ -1285,20 +1285,25 @@ class GitKanban(BaseScript):
         queues = self.config_json.get('queues', {})
         queues_list = queues.values()
 
-        issue_labels = [il['name'] for il in issue['labels']]
-        snooze_repo = self.git.get_repo(repo_name)
-        snooze_issue = snooze_repo.get_issue(number=issue['number'])
-        # remove snooze label
-        snooze_issue.remove_from_labels(snooze_label)
+        try:
+            issue_labels = [il['name'] for il in issue['labels']]
+            snooze_repo = self.git.get_repo(repo_name)
+            snooze_issue = snooze_repo.get_issue(number=issue['number'])
+            # remove snooze label
+            snooze_issue.remove_from_labels(snooze_label)
 
-        # remove queue label
-        for ql in queues_list:
-            if ql in issue_labels:
-                snooze_issue.remove_from_labels(ql)
+            # remove queue label
+            for ql in queues_list:
+                if ql in issue_labels:
+                    snooze_issue.remove_from_labels(ql)
 
-        # add inprogress-status label
-        snooze_issue.add_to_labels(queues['in-progress'])
-
+            # add inprogress-status label
+            snooze_issue.add_to_labels(queues['in-progress'])
+        except GithubException as e:
+            if e.data['message'] == "Label does not exist":
+                self.log.exception('expected_exception_ignore_it')
+            else:
+                self.log.exception('something_wrong_with_api', message=e.data['message'])
     def snooze(self):
         # get all the repo's from the user specs
         self.request_count = 0
