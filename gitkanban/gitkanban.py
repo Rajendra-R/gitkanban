@@ -115,11 +115,11 @@ class GitKanban(BaseScript):
         )
         snooze_cmd.set_defaults(func=self.snooze)
 
-    def update_alert_issue_with_issue_assignees(self, alert_repo, record, peoples_list, alert_msg):
+    def update_alert_issue_with_issue_assignees(self, alert_repo, record, peoples_list, alert_msg, esc_people):
         existed_names = record['person'].split(',')
         remove_p_list = []
         for ep in existed_names:
-            if ep not in peoples_list:
+            if ep not in peoples_list and not in esc_people:
                 remove_p_list.append(ep)
 
         get_alert_issue = alert_repo.get_issue(number=record['alert_issue_id'])
@@ -150,11 +150,11 @@ class GitKanban(BaseScript):
         else:
             return
 
-    def send_alert_to_github(self, alert_repo, alert_msg, record=None, peoples_list=None):
+    def send_alert_to_github(self, alert_repo, alert_msg, record=None, peoples_list=None, esc_people=None):
         # send alert to github
         try:
             if record:
-                existed_names = self.update_alert_issue_with_issue_assignees(alert_repo, record, peoples_list, alert_msg)
+                existed_names = self.update_alert_issue_with_issue_assignees(alert_repo, record, peoples_list, alert_msg, esc_people)
                 get_alert_issue = alert_repo.get_issue(number=record['alert_issue_id'])
                 if get_alert_issue.state == "closed":
                     if existed_names:
@@ -1044,9 +1044,26 @@ class GitKanban(BaseScript):
                             )
                             if record:
                                 already_alert.append("{}:{}:{}".format(co['name'], record['person'], issue_url))
+                                # get all the escalation people for the issue
+                                # to prevent from auto un-assign
+                                esc_people = []
+                                for owship in OWNERSHIP_HIERARCHY[1:]:
+                                    own_hi, pe_list = self.get_people(
+                                        repo_name, issue,
+                                        ownership_index,
+                                        queues_list,
+                                        repo_groups,
+                                        ownership_list,
+                                        owship
+                                    )
+                                    if pe_list:
+                                        esc_people.extend(pe_list)
+                                esc_people = list(dict.fromkeys(l))
+
                                 if check_alert_issues:
                                     peoples_list = [a['login'] for a in issue['assignees']]
-                                self.send_alert_to_github(alert_repo, alert_msg, record, peoples_list)
+
+                                self.send_alert_to_github(alert_repo, alert_msg, record, peoples_list, esc_people)
                                 # escalation logic
                                 last_alert_time = record['datetime']
                                 last_escalation = record['escalation_hierarchy']
@@ -1304,6 +1321,7 @@ class GitKanban(BaseScript):
                 self.log.exception('expected_exception_ignore_it')
             else:
                 self.log.exception('something_wrong_with_api', message=e.data['message'])
+
     def snooze(self):
         # get all the repo's from the user specs
         self.request_count = 0
