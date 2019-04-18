@@ -757,7 +757,7 @@ class GitKanban(BaseScript):
 
         elif 'eow' in time_constraint:
             current_weekday = parser.parse(p_current_time_utc).weekday()
-            return (4 >= current_weekday)
+            return (current_weekday >= 4)
 
         elif 'eom' in time_constraint:
             current_date = parser.parse(p_current_time_utc).day
@@ -1289,13 +1289,15 @@ class GitKanban(BaseScript):
                 except TypeError:
                     break
 
-                return self._get_snooze_label_time(event_list, snooze_labels_list)
+                label_person, snooze_label_time = self._get_snooze_label_time(event_list, snooze_labels_list)
+                if snooze_label_time:
+                    return (label_person, snooze_label_time)
 
                 prev_page = r_obj.links.get('prev', {})
                 if not prev_page:
-                    break
+                    return (None, None)
                 else:
-                    last_event_page = prev_page
+                    last_event_page = prev_page.get('url', '')
         else:
             return self._get_snooze_label_time(event_list, snooze_labels_list)
 
