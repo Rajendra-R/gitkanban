@@ -12,7 +12,9 @@ setup(
         "requests==2.20.1",
         "pylru==1.1.0",
         "pytz==2018.3",
-        "numpy==1.16.2"
+        "numpy==1.16.2",
+        "SQLAlchemy==1.3.3",
+        "SQLAlchemy-Utils==0.33.11",
     ],
     author="deep-compute",
     author_email="contact@deepcompute.com",
