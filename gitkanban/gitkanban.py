@@ -559,23 +559,24 @@ class GitKanban(BaseScript):
                 else:
                     break
             #TODO: Have to handle few more status_codes
+            del params['access_token']
             if resp_obj.status_code == 403:
                 #TODO: Have to wait for till Retry-After time
                 self.log.exception("github_api_rate_limit_exceeded", data=resp_obj.headers)
                 sys.exit(1)
             elif resp_obj.status_code == 404:
-                self.log.exception("no_data_found", data=data, url=url)
+                self.log.exception("no_data_found", data=data, url=url, params=params)
                 return
             elif resp_obj.status_code == 502:
                 self.log.exception("got_github_server_error_after_max_retries",
-                    retry_count=retry_count, data=data, url=url
+                    retry_count=retry_count, data=data, url=url, params=params
                 )
                 return
             elif resp_obj.status_code == 422:
-                self.log.exception("got_invalid_fields", data=data, url=url)
+                self.log.exception("got_invalid_fields", data=data, url=url, params=params)
                 return
             self.request_count += 1
-            self.log.info('successfully_requested_a_url', url=url)
+            self.log.info('successfully_requested_a_url', url=url, params=params)
         except Exception as e:
             self.log.exception('not_able_to_request', url=url, error=e)
 
@@ -1335,8 +1336,14 @@ class GitKanban(BaseScript):
         peoples = self.config_json.get('people', {})
         snooze_labels = self.config_json.get('snooze_labels', [])
         snooze_labels_list = [i['name'] for i in snooze_labels]
+        repo_list = []
         for repo in final_repo_list:
             repo_name = repo['repo'].full_name
+            # To avoid duplicate repositories
+            if repo_name in repo_list:
+                continue
+            else:
+                repo_list.append(repo_name)
             self.repo_group_name = repo['repo_group']
 
             req_url = ISSUE_URL.format(repo_name)
