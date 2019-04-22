@@ -590,8 +590,12 @@ class GitKanban(BaseScript):
                 return
             self.request_count += 1
             self.log.info('successfully_requested_a_url', url=url, params=params)
+        except requests.exceptions.ConnectionError:
+            self.log.exception('got_connection_error', url=url)
+            return (None, None)
         except Exception as e:
             self.log.exception('not_able_to_request', url=url, error=e)
+            return (None, None)
 
         if isinstance(data, dict):
             data = [data]
@@ -964,7 +968,7 @@ class GitKanban(BaseScript):
                             resp_obj, issues_list = self.make_request(pr_url)
                         except TypeError:
                             continue
-                        assert len(issues_list) <=1, "bad pull request"
+                        assert len(issues_list) <= 1, "bad pull request"
                         issue = issues_list[0]
 
                     # for normal issues
