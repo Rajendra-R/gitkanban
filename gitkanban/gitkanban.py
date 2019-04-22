@@ -1,11 +1,12 @@
 import sys
 import json
 import os
+import copy
+import re
+import itertools
 import datetime
 import calendar
 import hashlib
-import copy
-import re
 from datetime import timedelta
 
 import numpy as np
@@ -409,7 +410,7 @@ class GitKanban(BaseScript):
         # prepare label separation for each issue based on ownership
         # if issue has "next", "bug-type" labels
         # if that repo is present in our repo_group
-        # -> ["queue:next", "label:bug-type", "repo:gitchecking/third", "repo_group:group1"]
+        # -> ["queue:next", "label:bug-type", "repo:gitchecking/third", "repo-group:group1"]
         rgl = self.config_json.get('repo_group_labels', {})
         rg_labels = []
         for k, v in rgl.items():
@@ -424,15 +425,19 @@ class GitKanban(BaseScript):
         issue_keys = []
         for k in ownership_keys:
             if k == 'repo':
-                issue_keys.append("repo:{}".format(repo_name))
+                issue_keys.append(["repo:{}".format(repo_name)])
             elif k == 'repo-group':
+                repo_group_list = []
                 for rn, rv in repo_groups.items():
                     if repo_name in [r['repo'].full_name for r in rv]:
-                        issue_keys.append('repo-group:{}'.format(rn))
+                        repo_group_list.append('repo-group:{}'.format(rn))
+                issue_keys.append(repo_group_list)
             elif k == 'queue':
+                queues_list = []
                 for l in issue_labels:
                     if l in queues_list:
-                        issue_keys.append("queue:{}".format(l))
+                        queues_list.append("queue:{}".format(l))
+                issue_keys.append(queues_list)
             else:
                 issue_rg_labels = []
                 for l in issue_labels:
@@ -446,7 +451,7 @@ class GitKanban(BaseScript):
                     if len(issue_rg_labels) > 1:
                         self.log.exception('got_multiple_repo_group_label_for_an_issue', issue_url=issue['html_url'])
 
-                    issue_keys.append(issue_rg_labels[0])
+                    issue_keys.append([issue_rg_labels[0]])
 
         return issue_keys
 
@@ -469,17 +474,25 @@ class GitKanban(BaseScript):
 
             # get all the ownership indexes from the config file of a issue
             issue_ownership_index = []
-            for c in check_issue_index:
-                issue_ownership_index.append(ownership_index.get(c, None))
+            for cl in check_issue_index:
+                ind_list = []
+                for c in cl:
+                    ind_list.append(ownership_index.get(c, None))
+                issue_ownership_index.append(ind_list)
 
-            issue_ownership_index = list(filter(None, issue_ownership_index)) # [{0,1,2}, {1,2}, {2,3}]
+            issue_ownership_index_list = []
+            for inl in issue_ownership_index:
+                issue_ownership_index_list.append(list(filter(None, inl))) # [[{0,1,2}], [{1,2}], [{2,3}]]
 
-            if len(check_issue_index) != len(issue_ownership_index):
-                issue_ownership_index = []
+            if len(check_issue_index) != len(issue_ownership_index_list):
+                issue_ownership_index_list = []
+
+            # combination of sets
+            issue_ownership_index_list = list(itertools.product(*issue_ownership_index_list))
 
             issue_ownership_intersection = set()
-            if issue_ownership_index:
-                issue_ownership_intersection = set.intersection(*issue_ownership_index) # {2}
+            for i in  issue_ownership_index_list:
+                issue_ownership_intersection.update(set.intersection(*list(i))) # {2}
 
             # get ownership dic of a index from the config ownership [{}, {}]
             final_ownership_list = []
@@ -1021,13 +1034,15 @@ class GitKanban(BaseScript):
                             "queue_name": co['queue'],
                             "constraint_title": co['title'],
                             "constraint_desc": co['description'],
-                            "time_since_activity": co['time_since_activity'],
                             "person_name": p,
                             "repo_name": repo_name,
                             "issue_creation_time": issue['created_at'],
                             "repo_group_name": self.repo_group_name,
                             "ownership_hierarchy": own_hi
                         }
+
+                        time_const = co['time_since_activity'] if co.get('time_since_activity', '') else co.get('time_since_creation', '')
+                        alert_msg["time_since_activity"] = time_const
 
                         # check the constraint is pass/not
                         if self.check_constraint(co, issue, people):
