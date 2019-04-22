@@ -957,7 +957,10 @@ class GitKanban(BaseScript):
 
                 # get issues for inbox constraints
                 if co_queue_name == "inbox":
-                    issues_list = [i for i in issues_list if not any (ln in queues_list for ln in [l['name'] for l in i['labels'] if l['name']])]
+                    if check_alert_issues:
+                        issues_list = issues_list
+                    else:
+                        issues_list = [i for i in issues_list if not any (ln in queues_list for ln in [l['name'] for l in i['labels'] if l['name']])]
 
                 for issue in issues_list:
                     # if issue is a pull request
@@ -985,10 +988,21 @@ class GitKanban(BaseScript):
                     # if issue moved from one queue to other after alert
                     # make a auto-resolve for the alerted issue
                     if check_alert_issues:
-                        if actual_q_name not in [l['name'] for l in issue['labels']]:
-                            alert_msg = {"constraint_name": co['name'], "issue_url": issue_url}
-                            self.close_alert_to_github(alert_repo, alert_msg, record)
-                            continue
+                        if actual_q_name:
+                            if actual_q_name not in [l['name'] for l in issue['labels']]:
+                                alert_msg = {"constraint_name": co['name'], "issue_url": issue_url}
+                                self.close_alert_to_github(alert_repo, alert_msg, record)
+                                continue
+                        else:
+                            # phase2 inbox
+                            alert_closed = False
+                            for l in issue['labels']:
+                                if l['name'] in queues_list:
+                                    alert_msg = {"constraint_name": co['name'], "issue_url": issue_url}
+                                    self.close_alert_to_github(alert_repo, alert_msg, record)
+                                    alert_closed = True
+                            if alert_closed:
+                                continue
 
                     # phase-1 Regular constraint ran
                     if not check_alert_issues:
