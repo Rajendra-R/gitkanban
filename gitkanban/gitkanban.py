@@ -193,8 +193,9 @@ class GitKanban(BaseScript):
                 issue_title = alert_msg['issue_title']
                 issue_id = "{}#{}".format(alert_msg['repo_name'], alert_msg['issue_no'])
                 time_since_activity = alert_msg['time_since_activity']
+                time_since_creation = alert_msg['time_since_creation']
                 alert_title = alert_msg['constraint_title'].format(issue_title=issue_title, issue_id=issue_id,
-                    time_since_activity=time_since_activity)
+                    time_since_activity=time_since_activity, time_since_creation=time_since_creation)
                 alert_desc = alert_msg['constraint_desc']
                 if not alert_desc:
                     alert_desc = alert_title
@@ -853,8 +854,11 @@ class GitKanban(BaseScript):
         # issue already closed but when issue come from our failed table.
         if issue['state'] == "closed":
             return False
+        # For inbox issues
+        if constraint.get('queue', '') == 'inbox':
+            issue_created_at = issue['created_at']
         # For pull request issues
-        if issue.get('commits_url', ''):
+        elif issue.get('commits_url', ''):
             issue_created_at = self.get_pr_recent_time(issue)
         else:
             # req a issue comments url to get the last comment info
@@ -1049,6 +1053,8 @@ class GitKanban(BaseScript):
                             "issue_html_url": issue['html_url'],
                             "issue_title": issue['title'],
                             "constraint_name": co['name'],
+                            "time_since_activity": co.get('time_since_activity', ''),
+                            "time_since_creation": co.get('time_since_creation', ''),
                             "queue_name": co['queue'],
                             "constraint_title": co['title'],
                             "constraint_desc": co['description'],
@@ -1058,9 +1064,6 @@ class GitKanban(BaseScript):
                             "repo_group_name": self.repo_group_name,
                             "ownership_hierarchy": own_hi
                         }
-
-                        time_const = co['time_since_activity'] if co.get('time_since_activity', '') else co.get('time_since_creation', '')
-                        alert_msg["time_since_activity"] = time_const
 
                         # check the constraint is pass/not
                         if self.check_constraint(co, issue, people):
