@@ -919,6 +919,8 @@ class GitKanban(BaseScript):
         peoples = self.config_json.get('people', {})
         dc_peoples_list = peoples.keys()
         peoples_blacklist = self.config_json.get('defaults', {}).get('peoples_blacklist', [])
+        snooze_labels = self.config_json.get('snooze_labels', [])
+        snooze_labels_list = [i['name'] for i in snooze_labels]
         repo_groups = self.config_json.get('repo_groups', {})
         # get the alert repo
         alert_repo = self.git.get_repo(self.args.alert_repo)
@@ -967,6 +969,16 @@ class GitKanban(BaseScript):
                         issues_list = [i for i in issues_list if not any (ln in queues_list for ln in [l['name'] for l in i['labels'] if l['name']])]
 
                 for issue in issues_list:
+                    # should not send alerts for snooze issues
+                    snooze_label_exist = False
+                    issue_labels_list = [l['name'] for l in issue['labels']]
+                    for il in issue_labels_list:
+                        if il in snooze_labels_list:
+                            snooze_label_exist = True
+                            break
+                    if snooze_label_exist:
+                        continue
+
                     # if issue is a pull request
                     pull_request = issue.get('pull_request', {})
                     if pull_request:
