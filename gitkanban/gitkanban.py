@@ -1033,8 +1033,25 @@ class GitKanban(BaseScript):
                         else:
                             peoples_list = [persons]
                     else:
-                        ownership = "assignees"
-                        own_hi, peoples_list = self.get_people(repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list, ownership)
+                        # get escalation people if assignees are not our people
+                        # but our agent is in assignees
+                        for o in OWNERSHIP_HIERARCHY:
+                            check_people_list = []
+                            own_hi, peoples_list = self.get_people(repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list, o)
+                            for pe in peoples_list:
+                                if pe in dc_peoples_list:
+                                    continue
+                                else:
+                                    check_people_list.append(pe)
+
+                            if check_people_list:
+                                for pb in peoples_blacklist:
+                                    if pb in check_people_list:
+                                        break
+                                continue
+                            elif not check_people_list and peoples_list:
+                                break
+
                     for p in peoples_list:
                         if p in peoples_blacklist or not p in dc_peoples_list:
                             continue
