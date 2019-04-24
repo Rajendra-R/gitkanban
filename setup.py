@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="gitkanban",
-    version="0.0.2",
+    version="0.0.3",
     packages=["gitkanban"],
     url="https://github.com/deep-compute/gitkanban",
     install_requires=[
