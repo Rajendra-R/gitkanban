@@ -307,11 +307,6 @@ class GitKanban(BaseScript):
         )
         self.log.info('send_escalation_msg')
 
-    def check_file_type(self, path):
-        if not path.endswith('.json'):
-            raise InvalidFileTypeException("prefered .json extension")
-        return path
-
     def check_db_type(self, path):
         if not path.endswith('.db'):
             raise InvalidDBTypeException("prefered .db extension")
@@ -1475,8 +1470,8 @@ class GitKanban(BaseScript):
         parser.add_argument('-p', '--password', type=str,
             help='github password'
         )
-        parser.add_argument("--config-file", required=True, type=self.check_file_type,
-            help="check the config file ex: conf.json"
+        parser.add_argument("--config-file", required=True, type=str,
+            help="check the config file ex: conf.json or config.conf"
         )
 
 def main():
