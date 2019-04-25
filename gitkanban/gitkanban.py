@@ -898,11 +898,39 @@ class GitKanban(BaseScript):
 
     def get_people_info(self, peoples, p):
         people = peoples[p]
-        #TODO: remove below two if cond
-        if not people.get('work_hours', {}):
-            people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
+        config_defaults = self.config_json.get('defaults', {})
         if not people.get('location', ''):
-            people['location'] = self.config_json.get('defaults', {})['location']
+            people['location'] = config_defaults['location']
+
+        p_type = people.get('type', '')
+        if not p_type:
+            p_type = config_defaults['type']
+            people['type'] = p_type
+
+        p_work_days = people.get('work_days', {})
+        if not p_work_days:
+            p_work_days = config_defaults['work_days'][p_type]
+
+        p_w_days = {}
+        for k, v in p_work_days.items():
+            if not v:
+                p_work_hours = people.get('work_hours', {})
+                if p_work_hours:
+                    p_w_days[k] = p_work_hours
+                else:
+                    p_w_days[k] = config_defaults['work_hours'][p_type]
+            else:
+                p_w_days[k] = v
+
+        people['work_days'] = p_w_days
+
+        p_location = people['location']
+        p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
+
+        # get person timezone current time
+        p_current_time = datetime.datetime.now(timezone(p_timezone))
+        p_week_day = calendar.day_name[p_current_time.date().weekday()].lower()
+        people['work_hours'] = people['work_days'][p_week_day]
 
         return people
 
