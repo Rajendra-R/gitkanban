@@ -616,8 +616,25 @@ class GitKanban(BaseScript):
         p_current_date = p_current_time.date().strftime('%d-%m-%Y')
         for h, d in public_holidays.items():
             if p_current_date == d:
-                self.log.info('public_holiday_alert_cancled', holiday=h)
+                self.log.info('public_holiday_alert_cancled', holiday=h, p_name=p_name)
                 return False
+
+        # check the person is off/not
+        p_offdays = people.get('offdays', [])
+        for po in p_offdays:
+            if p_current_date == po['date']:
+                if po['duration'] == 'full':
+                    self.log.info('person_is_off_alert_cancled', leave_info=po, p_name=p_name)
+                    return False
+                p_c_h = p_current_time.time().hour
+                if po['duration'] == 'first-half':
+                    if p_c_h < 12:
+                        self.log.info('person_is_off_first_half', leave_info=po, p_name=p_name)
+                        return False
+                if po['duration'] == 'second-half':
+                    if p_c_h > 12 and p_c_h <= 24:
+                        self.log.info('person_is_off_second_half', leave_info=po, p_name=p_name)
+                        return False
 
         # check the current date in weekend
         if calendar.day_name[p_current_time.date().weekday()] in ["Saturday", "Sunday"]:
@@ -879,6 +896,16 @@ class GitKanban(BaseScript):
         issue_created_at = self.get_issue_created_datetime(issue_created_at, people)
         return self.calculate_time_constraint(time_constraint, issue_created_at, self.p_current_time_utc, people)
 
+    def get_people_info(self, peoples, p):
+        people = peoples[p]
+        #TODO: remove below two if cond
+        if not people.get('work_hours', {}):
+            people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
+        if not people.get('location', ''):
+            people['location'] = self.config_json.get('defaults', {})['location']
+
+        return people
+
     def check_constraints(self):
         # prepare owndership index from the given config file
         # d = [{'a': 'a1', 'b': 'b1', 'c': 'c1'}, {'a': 'a1', 'd': 'd1'}, {'b': 'b1'}, {'e': 'e1'}]
@@ -1063,12 +1090,7 @@ class GitKanban(BaseScript):
                         if p in peoples_blacklist or not p in dc_peoples_list:
                             continue
 
-                        people = peoples[p]
-                        #TODO: remove below two if cond
-                        if not people.get('work_hours', {}):
-                            people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
-                        if not people.get('location', ''):
-                            people['location'] = self.config_json.get('defaults', {})['location']
+                        people = self.get_people_info(peoples, p)
 
                         alert_msg = {
                             "priority": co['priority'],
@@ -1182,12 +1204,7 @@ class GitKanban(BaseScript):
                                         if not pe_list:
                                             continue
                                         for ap in pe_list:
-                                            _people = peoples[ap]
-                                            #TODO: remove below two if cond
-                                            if not _people.get('work_hours', {}):
-                                                _people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
-                                            if not _people.get('location', ''):
-                                                _people['location'] = self.config_json.get('defaults', {})['location']
+                                            _people = self.get_people_info(peoples, ap)
                                             p_location = _people['location']
                                             p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
                                             p_current_time_utc = datetime.datetime.now(timezone(p_timezone)).astimezone(timezone('UTC')).strftime('%Y-%m-%dT%H:%M:%SZ')
