@@ -637,8 +637,12 @@ class GitKanban(BaseScript):
                         return False
 
         # check the current date in weekend
-        if calendar.day_name[p_current_time.date().weekday()] in ["Saturday", "Sunday"]:
-            return False
+        if people['type'] == 'fresher':
+            if calendar.day_name[p_current_time.date().weekday()] == "Sunday":
+                return False
+        else:
+            if calendar.day_name[p_current_time.date().weekday()] in ["Saturday", "Sunday"]:
+                return False
         p_current_time_utc = datetime.datetime.now(timezone(p_timezone)).astimezone(timezone('UTC')).time()
 
         # person UTC working time start
@@ -682,13 +686,18 @@ class GitKanban(BaseScript):
         # check last comment on weekends working hours move to monday working hours.
         issue_created_at_obj = parser.parse(issue_created_at)
         # Should not consider weekends.
-        if calendar.day_name[issue_created_at_obj.date().weekday()] == "Saturday":
-            issue_created_at_obj += datetime.timedelta(days=1)
-            issue_created_at_obj += datetime.timedelta(days=1)
-            issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
-        elif calendar.day_name[issue_created_at_obj.date().weekday()] == "Sunday":
-            issue_created_at_obj += datetime.timedelta(days=1)
-            issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
+        if people['type'] == 'fresher':
+            if calendar.day_name[issue_created_at_obj.date().weekday()] == "Sunday":
+                issue_created_at_obj += datetime.timedelta(days=1)
+                issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
+        else:
+            if calendar.day_name[issue_created_at_obj.date().weekday()] == "Saturday":
+                issue_created_at_obj += datetime.timedelta(days=1)
+                issue_created_at_obj += datetime.timedelta(days=1)
+                issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
+            elif calendar.day_name[issue_created_at_obj.date().weekday()] == "Sunday":
+                issue_created_at_obj += datetime.timedelta(days=1)
+                issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
 
         # issue updated at UTC time
         isu_hour = parser.parse(issue_created_at).hour
@@ -704,11 +713,15 @@ class GitKanban(BaseScript):
                 issue_created_at_obj = parser.parse(issue_created_at)
                 issue_created_at_obj += datetime.timedelta(days=1)
                 # Should not consider weekends.
-                if calendar.day_name[issue_created_at_obj.date().weekday()] == "Saturday":
-                    issue_created_at_obj += datetime.timedelta(days=1)
-                    issue_created_at_obj += datetime.timedelta(days=1)
-                elif calendar.day_name[issue_created_at_obj.date().weekday()] == "Sunday":
-                    issue_created_at_obj += datetime.timedelta(days=1)
+                if people['type'] == 'fresher':
+                    if calendar.day_name[issue_created_at_obj.date().weekday()] == "Sunday":
+                        issue_created_at_obj += datetime.timedelta(days=1)
+                else:
+                    if calendar.day_name[issue_created_at_obj.date().weekday()] == "Saturday":
+                        issue_created_at_obj += datetime.timedelta(days=1)
+                        issue_created_at_obj += datetime.timedelta(days=1)
+                    elif calendar.day_name[issue_created_at_obj.date().weekday()] == "Sunday":
+                        issue_created_at_obj += datetime.timedelta(days=1)
                 issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
                 return issue_created_at
         else:
@@ -754,11 +767,18 @@ class GitKanban(BaseScript):
             # last date
             total_dates[-1] = p_current_time_utc
             last_date_obj = parser.parse(p_current_time_utc)
-            if not calendar.day_name[last_date_obj.date().weekday()] in ["Saturday", "Sunday"]:
-                diff = relativedelta(last_date_obj, last_date_obj.replace(hour=int(pwh_start_h), minute=int(pwh_start_m)))
-                total_hours += diff.hours
-                if diff.minutes == 59:
-                    total_hours += 1
+            if people['type'] == 'fresher':
+                if not calendar.day_name[last_date_obj.date().weekday()] == "Sunday":
+                    diff = relativedelta(last_date_obj, last_date_obj.replace(hour=int(pwh_start_h), minute=int(pwh_start_m)))
+                    total_hours += diff.hours
+                    if diff.minutes == 59:
+                        total_hours += 1
+            else:
+                if not calendar.day_name[last_date_obj.date().weekday()] in ["Saturday", "Sunday"]:
+                    diff = relativedelta(last_date_obj, last_date_obj.replace(hour=int(pwh_start_h), minute=int(pwh_start_m)))
+                    total_hours += diff.hours
+                    if diff.minutes == 59:
+                        total_hours += 1
         else:
             total_dates[0] = issue_created_at
             first_date_obj = parser.parse(issue_created_at)
@@ -770,8 +790,12 @@ class GitKanban(BaseScript):
 
         # calculate for middle dates
         for d in total_dates[1:-1]:
-            if calendar.day_name[parser.parse(d).date().weekday()] in ["Saturday", "Sunday"]:
-                continue
+            if people['type'] == 'fresher':
+                if calendar.day_name[parser.parse(d).date().weekday()] == "Sunday":
+                    continue
+            else:
+                if calendar.day_name[parser.parse(d).date().weekday()] in ["Saturday", "Sunday"]:
+                    continue
             total_hours += total_pwh
 
         return total_hours
@@ -795,11 +819,15 @@ class GitKanban(BaseScript):
             current_year = parser.parse(p_current_time_utc).year
             current_month = parser.parse(p_current_time_utc).month
             eom_date = calendar.monthrange(current_year, current_month)[1]
-            if calendar.day_name[calendar.weekday(current_year, current_month, eom_date)] == "Saturday":
-                eom_date -= 1
-            elif calendar.day_name[calendar.weekday(current_year, current_month, eom_date)] == "Sunday":
-                eom_date -= 1
-                eom_date -= 1
+            if people['type'] == 'fresher':
+                if calendar.day_name[calendar.weekday(current_year, current_month, eom_date)] == "Sunday":
+                    eom_date -= 1
+            else:
+                if calendar.day_name[calendar.weekday(current_year, current_month, eom_date)] == "Saturday":
+                    eom_date -= 1
+                elif calendar.day_name[calendar.weekday(current_year, current_month, eom_date)] == "Sunday":
+                    eom_date -= 1
+                    eom_date -= 1
             return (current_date >= eom_date)
 
         elif 'w' in time_constraint:
