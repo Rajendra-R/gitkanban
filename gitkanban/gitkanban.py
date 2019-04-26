@@ -1012,9 +1012,12 @@ class GitKanban(BaseScript):
             # add params from config before going to request
             if repo.get('label', ''):
                 label_names = "{},{}".format(actual_q_name, repo['label'])
+                params = {"labels": label_names}
             else:
-                label_names = actual_q_name
-            params = {"labels": label_names}
+                if not actual_q_name:
+                    params = {}
+                else:
+                    params = {"labels": actual_q_name}
 
             if repo.get('assignee', ''):
                 params['assignee'] = repo['assignee']
