@@ -889,13 +889,13 @@ class GitKanban(BaseScript):
         pr_cm_co_dates.sort()
         return pr_cm_co_dates[-1]
 
-    def check_constraint(self, constraint, issue, people):
+    def check_constraint(self, constraint, issue, people, actual_q_name):
         time_constraint = constraint.get('time_since_creation', '') or constraint.get('time_since_activity', '')
         # issue already closed but when issue come from our failed table.
         if issue['state'] == "closed":
             return False
         # For inbox issues
-        if constraint.get('queue', '') == 'inbox':
+        if not actual_q_name:
             issue_created_at = issue['created_at']
         # For pull request issues
         elif issue.get('commits_url', ''):
@@ -1010,14 +1010,11 @@ class GitKanban(BaseScript):
             co_queue_name = co.get('queue', '')
             actual_q_name = queues[co_queue_name]
             # add params from config before going to request
-            if not actual_q_name:
-                params = {} # for inbox case
+            if repo.get('label', ''):
+                label_names = "{},{}".format(actual_q_name, repo['label'])
             else:
-                if repo.get('label', ''):
-                    label_names = "{},{}".format(actual_q_name, repo['label'])
-                else:
-                    label_names = actual_q_name
-                params = {"labels": label_names}
+                label_names = actual_q_name
+            params = {"labels": label_names}
 
             if repo.get('assignee', ''):
                 params['assignee'] = repo['assignee']
@@ -1038,7 +1035,7 @@ class GitKanban(BaseScript):
                 next_page = resp_obj.links.get('next', {})
 
                 # get issues for inbox constraints
-                if co_queue_name == "inbox":
+                if not actual_q_name:
                     if check_alert_issues:
                         issues_list = issues_list
                     else:
@@ -1156,7 +1153,7 @@ class GitKanban(BaseScript):
                         }
 
                         # check the constraint is pass/not
-                        if self.check_constraint(co, issue, people):
+                        if self.check_constraint(co, issue, people, actual_q_name):
                             # check the person is in work_hours
                             if not self.check_person_is_in_work_hours(people):
                                 continue
