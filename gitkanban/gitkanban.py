@@ -889,17 +889,20 @@ class GitKanban(BaseScript):
         pr_cm_co_dates.sort()
         return pr_cm_co_dates[-1]
 
-    def check_constraint(self, constraint, issue, people, actual_q_name):
+    def check_constraint(self, constraint, issue, people, actual_q_name, check_alert_issues):
         time_constraint = constraint.get('time_since_creation', '') or constraint.get('time_since_activity', '')
         # issue already closed but when issue come from our failed table.
         if issue['state'] == "closed":
             return False
-        # For inbox issues
-        if not actual_q_name:
-            issue_created_at = issue['created_at']
         # For pull request issues
         elif issue.get('commits_url', ''):
-            issue_created_at = self.get_pr_recent_time(issue)
+            if check_alert_issues:
+                issue_created_at = self.get_pr_recent_time(issue)
+            else:
+                issue_created_at = issue['created_at']
+        # For inbox issues
+        elif not actual_q_name:
+            issue_created_at = issue['created_at']
         else:
             # req a issue comments url to get the last comment info
             comments_url = issue['comments_url']
@@ -1156,7 +1159,7 @@ class GitKanban(BaseScript):
                         }
 
                         # check the constraint is pass/not
-                        if self.check_constraint(co, issue, people, actual_q_name):
+                        if self.check_constraint(co, issue, people, actual_q_name, check_alert_issues):
                             # check the person is in work_hours
                             if not self.check_person_is_in_work_hours(people):
                                 continue
@@ -1355,8 +1358,6 @@ class GitKanban(BaseScript):
             existing_labels = []
             for r in rg_list:
                 #TODO: below if cond for particaular case
-                #if 'label' in r.keys():
-                #    continue
                 repo_name = r['repo']
                 try:
                     repo = self.git.get_repo(repo_name)
