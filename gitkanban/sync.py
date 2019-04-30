@@ -28,3 +28,8 @@ class SyncCommand:
         engine = create_engine(self.args.db)
         Base.metadata.drop_all(engine)
         Base.metadata.create_all(engine)
+
+        # create session
+        Session = sessionmaker()
+        Session.configure(bind=engine)
+        session = Session()
