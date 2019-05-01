@@ -2,7 +2,7 @@ import json
 from github import Github
 
 
-# create a Github instance using token or git = Github(user, pass)
+# create a Github instance using token or user/pass
 token = 'YOUR TOKEN'
 git = Github(token)
 
@@ -16,7 +16,7 @@ def get_config_file():
 
 # gets all repositories from config file
 #   :return: list of Repository objects
-def get_all_repos():
+def get_all_repos(config_file, git):
     # config_file = self.args.config_json
     config_file = get_config_file()
 
@@ -24,6 +24,7 @@ def get_all_repos():
     repo_groups = config_file['repo_groups']
 
     # get all repos from each repo_group
+    # git = self.args.git
     return [git.get_repo(str(*i.values())) for k, v in repo_groups.items() for i in v]
 
 
@@ -35,7 +36,7 @@ def get_organization(repo, session):
     org_git = repo.organization
     org_row = None  # do I make condition for repo WITHOUT an organization?
 
-    # assign existing organization
+    # if existing organization
     if Organization.query.filter_by(login=org_git.login).first():
         org_row = Organization.query.filter_by(login=org_git.login).first()
     else:  # if it doesn't exist, create & add it
@@ -48,16 +49,16 @@ def get_organization(repo, session):
 
 # add User row to session by creating or find existing
 #   :return: list of User rows
-def get_user(repo=None, issue_comment=None):
+def get_users(model):
 
     users = None
 
     # if getting user from repo
-    if repo:
+    if hasattr(model, Repository):
         pass
 
     # if getting user from issue_comment
-    if issue_comment:
+    if hasattr(model, IssueComment):
         pass
 
     return users
@@ -69,22 +70,54 @@ def get_assignees(issue):
     return assignees
 
 
+# add Label row to session by creating from config file
+def populate_labels(config_file, session):
+
+    labels = config_file['labels']
+    label_names = list(labels.keys())
+
+    for name in label_names:
+        # get attributes by name
+        color = labels[name]['color']
+        description = labels[name]['description']
+
+        label_row = Label(name=name, description=description, color=color)
+        session.add(label_row)
+
+
 # add Label row to session by creating or find existing
 #   :return: Label row
 def get_labels(issue):
 
+    # get labels of issue
     labels = issue.labels
-    return labels
+    label_rows = []
+
+    for label in labels:
+        # if existing label
+        if Label.query.filter_by(name=label.name).first():
+            label_row = Label.query.filter_by(name=label.name).first()
+
+        else:  # if it doesn't exist, create & add it
+            label_row = Label(name=label.name, description=label.description,
+                              color=label.color)
+            session.add(label_row)
+
+    return label_rows
 
 
 # TODO: add issue_user_assignee_rel_table and issue_label_rel_table
-#       issue assignees and labels
-#       labels
-#       possibly make separate functions for each model instead of nested loops
+#       Issue assignees and labels
 def populate_db(session):
 
+    # get config file
+    config_file = get_config_file()
+
+    # populate labels
+    populate_labels(config_file, session)
+
     # get all repos
-    repos = get_all_repos()
+    repos = get_all_repos(config_file, git)
 
     # for each repo, populate tables by adding rows
     for repo in repos:
@@ -105,6 +138,9 @@ def populate_db(session):
 
         for issue in open_issues:
 
+            # get issue's Users
+            issue_users = get_user(issue)
+
             user = issue.closed_by
             assignees = get_assignees(issue)
             labels = get_labels(issue)
@@ -118,6 +154,9 @@ def populate_db(session):
 
             # for each issue get issue comments
             for comment in issue.get_comments():
+
+                # get comment Users
+                comment_users = get_users(comment)
 
                 # add issue_comment_row
                 commenter = comment.user
