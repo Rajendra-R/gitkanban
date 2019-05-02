@@ -1,11 +1,15 @@
 from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from .models import Base
+from .models import Organization, Repository, issue_user_assignee_rel_table, \
+    issue_label_rel_table, Issue, IssueComment, User, Label
 
 
 class SyncCommand:
     def __init__(self, gitkanban):
         self.gitkanban = gitkanban
+        self.config_json = None
         self.args = None
         self.git = None
 
@@ -21,7 +25,7 @@ class SyncCommand:
         cmd.set_defaults(func=self.run)
 
     # add Label row to session by creating from config file
-    def populate_labels(config_file):
+    def populate_labels(self, config_file, session):
 
         labels = config_file['labels']
         label_names = list(labels.keys())
@@ -37,6 +41,7 @@ class SyncCommand:
     def run(self):
         self.args = self.gitkanban.args
         self.git = self.gitkanban.git
+        self.config_json = self.gitkanban.config_json
 
         # Connect to db and drop existing tables
         # before creating required tables
@@ -50,4 +55,5 @@ class SyncCommand:
         session = Session()
 
         # populate all labels from config file
-        populate_labels(self.args.config_json, session)
+        self.populate_labels(self.config_json, session)
+        session.commit()
