@@ -38,6 +38,8 @@ class SyncCommand:
             label_row = Label(name=name, description=description, color=color)
             session.add(label_row)
 
+        session.commit()
+
     def run(self):
         self.args = self.gitkanban.args
         self.git = self.gitkanban.git
@@ -56,4 +58,3 @@ class SyncCommand:
 
         # populate all labels from config file
         self.populate_labels(self.config_json, session)
-        session.commit()
