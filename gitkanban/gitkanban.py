@@ -1119,11 +1119,15 @@ class GitKanban(BaseScript):
                         for o in OWNERSHIP_HIERARCHY:
                             check_people_list = []
                             own_hi, peoples_list = self.get_people(repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list, o)
+                            cmp_people_list = []
                             for pe in peoples_list:
                                 if pe in dc_peoples_list:
-                                    continue
+                                    cmp_people_list.append(pe)
                                 else:
                                     check_people_list.append(pe)
+
+                            if cmp_people_list:
+                                break
 
                             if check_people_list:
                                 for pb in peoples_blacklist:
