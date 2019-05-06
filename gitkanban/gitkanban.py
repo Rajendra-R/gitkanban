@@ -1006,6 +1006,12 @@ class GitKanban(BaseScript):
         # get all the repo's from the user specs
         final_repo_list = self.get_repo_list()
 
+        # get all repo group label names
+        rgl = self.config_json.get('repo_group_labels', {})
+        repo_group_labels = []
+        for k, v in rgl.items():
+            repo_group_labels.append(v['name'])
+
         # sub function
         def __check_constraints(self, co=None, check_alert_issues=False, record=None):
             if check_alert_issues:
@@ -1116,26 +1122,44 @@ class GitKanban(BaseScript):
                     else:
                         # get escalation people if assignees are not our people
                         # but our agent is in assignees
+                        issue_labels = [l['name'] for l in issue['labels']]
+                        blacklist_people = False
                         for o in OWNERSHIP_HIERARCHY:
-                            check_people_list = []
-                            own_hi, peoples_list = self.get_people(repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list, o)
                             cmp_people_list = []
+                            other_people_list = []
+                            own_hi, peoples_list = self.get_people(repo_name, issue, ownership_index, queues_list, repo_groups, ownership_list, o)
                             for pe in peoples_list:
                                 if pe in dc_peoples_list:
                                     cmp_people_list.append(pe)
                                 else:
-                                    check_people_list.append(pe)
+                                    other_people_list.append(pe)
 
                             if cmp_people_list:
                                 break
 
-                            if check_people_list:
+                            # If assignees people are not from our cmp but
+                            # our agent in the assignees we have to escalate
+                            if other_people_list:
                                 for pb in peoples_blacklist:
-                                    if pb in check_people_list:
+                                    if pb in other_people_list:
+                                        blacklist_people = True
                                         break
                                 continue
-                            elif not check_people_list and peoples_list:
-                                break
+
+                            # No assignees but team label is present have to escalate
+                            team_label = False
+                            if not cmp_people_list and not other_people_list:
+                                if blacklist_people:
+                                    continue
+                                else:
+                                    for rgl in repo_group_labels:
+                                        if rgl in issue_labels:
+                                            team_label = True
+                                            break
+                                    if team_label:
+                                        continue
+                                    else:
+                                        break
 
                     for p in peoples_list:
                         if p in peoples_blacklist or not p in dc_peoples_list:
