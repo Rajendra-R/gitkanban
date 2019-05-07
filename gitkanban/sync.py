@@ -25,14 +25,14 @@ class SyncCommand:
             ''')
         cmd.set_defaults(func=self.run)
 
-    # get all repos from config_json, get repos' organization
     def populate_repos(self):
-        # get list of all repos
+        # populate Repository table
+
         repos = self.get_all_repos()
 
         for repo in repos:
-            # add and get repo's Organization
-            organization_row = self.add_and_get_organization(repo)
+            # add/get repo's Organization
+            organization_row = self.add_get_organization(repo.organization)
 
             # create Repository row and add to session
             repository_row = Repository(name=repo.name, description=repo.description,
@@ -46,14 +46,25 @@ class SyncCommand:
         # commit any changes in transaction buffer
         self.session.commit()
 
-    def populate_issues(self, repo, repo_row):
-        # get open issues from repo
-        open_issues = repo.get_issues(state='open')
+    def populate_issues(self, repo, repo_row, all_issues=False):
+        """
+        populate Issue table
+        :param repo: Repository Github object
+        :param repo_row: Repository table row from models
+        :param all_issues: optional Boolean to get all issues or by default
+                           only open issues
+        """
 
-        for issue in open_issues:
-            # get closed user and add to table
+        # get issue from repo
+        if all_issues:
+            issues = repo.get_issues()
+        else:
+            issues = repo.get_issues(state='open')
+
+        for issue in issues:
+            # get closed_by User and add to table
             closed_by = issue.closed_by
-            self.add_and_get_user(closed_by)
+            self.add_get_user(closed_by)
 
             # create Issue row and add to session
             issue_row = Issue(number=issue.number, title=issue.title,
@@ -62,9 +73,12 @@ class SyncCommand:
                               repository=repo_row)
             self.session.add(issue_row)
 
+            # populate all Label rows from issue
+            self.populate_labels(issue.labels)
+
             # append issues to users and issues to labels
-            self.append_issues_users(issue_row, issue.assignees)
-            self.append_issues_labels(issue_row, issue.labels)
+            self.append_issue_users(issue_row, issue.assignees)
+            self.append_issue_labels(issue_row, issue.labels)
 
             # add all IssueComment rows from issue
             self.populate_issue_comments(issue, issue_row)
@@ -73,12 +87,17 @@ class SyncCommand:
         self.session.commit()
 
     def populate_issue_comments(self, issue, issue_row):
-        # for each issue get issue comments
+        """
+        populate IssueComment table
+        :param issue: Issue Github object
+        :param issue_row: Issue table row from models
+        """
+
         for comment in issue.get_comments():
             # add and get IssueComment's User
-            user_row = self.add_and_get_user(comment.user)
+            user_row = self.add_get_user(comment.user)
 
-            # add issue_comment_row
+            # create IssueComment row and add to session
             issue_comment_row = IssueComment(issue=issue_row, user=user_row,
                                              body=comment.body)
             self.session.add(issue_comment_row)
@@ -86,41 +105,50 @@ class SyncCommand:
         # commit any changes in transaction buffer
         self.session.commit()
 
-    # add Label row to session by creating from config file
-    def populate_labels(self):
-        # get list of label names
-        labels = self.config_json['labels']
-        label_names = list(labels.keys())
+    # add Label row to session by creating from repo
+    def populate_labels(self, labels):
+        """
+        populate Labels table
+        :param issue: Issue Github object
+        :param issue_row: Issue table row from models
+        """
 
-        for name in label_names:
-            # get attributes by name
-            color = labels[name]['color']
-            description = labels[name]['description']
+        label_row = None
 
-            label_row = Label(name=name, description=description, color=color)
-            self.session.add(label_row)
+        for label in labels:
+            # if there is no label, return empty Label
+            if not label:
+                return Organization(name=None, description=None, color=None)
+
+            # if existing Label
+            if self.session.query(Label).filter_by(name=label.name).first():
+                label_row = self.session.query(Label).filter_by(name=label.name).first()
+            else:  # create and add
+                label_row = Label(name=label.name, description=label.description, color=label.color)
+                self.session.add(label_row)
 
         # commit any changes in transaction buffer
         self.session.commit()
 
-    # add Organization row to session by creating or find existing
-    #   :return: Organization row
-    def add_and_get_organization(self, repo):
+    def add_get_organization(self, org):
+        """
+        add single Organization row to the Organization table if it does not exist
+        :param org: Organization Github object
+        :return: Organization table object for a single row (org_row)
+        """
 
-        # get organization of repo
-        org_git = repo.organization
         org_row = None
 
         # if there is no organization, return empty Organization
-        if not org_git:
+        if not org:
             return Organization(login=None, name=None, description=None, email=None)
 
         # if existing Organization
-        if self.session.query(Organization).filter_by(login=org_git.login).first():
-            org_row = self.session.query(Organization).filter_by(login=org_git.login).first()
-        else:  # if it doesn't exist, create & add it
-            org_row = Organization(login=org_git.login, name=org_git.name,
-                                   description=org_git.description, email=org_git.email)
+        if self.session.query(Organization).filter_by(login=org.login).first():
+            org_row = self.session.query(Organization).filter_by(login=org.login).first()
+        else:  # create and add
+            org_row = Organization(login=org.login, name=org.name,
+                                   description=org.description, email=org.email)
             self.session.add(org_row)
 
         # commit any changes in transaction buffer
@@ -128,8 +156,12 @@ class SyncCommand:
 
         return org_row
 
-    # add User row to session if it doesn't exist, return User
-    def add_and_get_user(self, user):
+    def add_get_user(self, user):
+        """
+        add single User row to the User table if it does not exist
+        :param user: User Github object
+        :return: User table object for a single row (user_row)
+        """
 
         user_row = None
 
@@ -141,7 +173,7 @@ class SyncCommand:
         # if existing User
         if self.session.query(User).filter_by(login=user.login).first():
             user_row = self.session.query(User).filter_by(login=user.login).first()
-        else:  # if User does not exist, create and add
+        else:  # create and add
             user_row = User(name=user.name, login=user.login,
                             company=user.company, location=user.location,
                             email=user.email, avatar_url=user.avatar_url)
@@ -152,8 +184,12 @@ class SyncCommand:
 
         return user_row
 
-    # add Label row to session if it doesn't exist, return Label
-    def add_and_get_label(self, label):
+    def add_get_label(self, label):
+        """
+        add single Label row to the Label table if it does not exist
+        :param user: Label Github object
+        :return: Label table object for a single row (label_row)
+        """
 
         label_row = None
 
@@ -164,7 +200,7 @@ class SyncCommand:
         # if existing Label
         if self.session.query(Label).filter_by(name=label.name).first():
             label_row = self.session.query(Label).filter_by(name=label.name).first()
-        else:  # if Label does not exist, create and add
+        else:  # create and add
             label_row = Label(name=label.name, description=label.description, color=label.color)
             self.session.add(label_row)
 
@@ -173,45 +209,49 @@ class SyncCommand:
 
         return label_row
 
-    # gets all repositories from config file
-    #   :return: list of Repository objects
     def get_all_repos(self):
+        # return list of Github Repository objects
 
-        # get repos from config file and git get_repo
+        # get repos from repo groups
         repo_groups = self.config_json['repo_groups']
         git = self.git
 
-        # get all repos from each repo_group
+        # use PyGithub to lookup each repository by name
         return [git.get_repo(str(*i.values())) for k, v in repo_groups.items() for i in v]
 
-    def append_issues_users(self, issue_row, users):
+    def append_issue_users(self, issue_row, users):
+        """
+        append Issue row to each User row (for many to many relationship)
+        :param issue_row: Issue Github object
+        :param users: list of User table objects
+        """
 
         for user in users:
-            # create User
-            user_row = self.add_and_get_user(user)
-            # append issue to user
+            # add/get User and append Issue row to User row
+            user_row = self.add_get_user(user)
             issue_row.assignees.append(user_row)
 
         # commit any changes in transaction buffer
         self.session.commit()
 
-    def append_issues_labels(self, issue_row, labels):
+    def append_issue_labels(self, issue_row, labels):
+        """
+        append Issue row to each Label row (for many to many relationship)
+        :param issue_row: Issue Github object
+        :param labels: list of Label table objects
+        """
+
         for label in labels:
-            # create Label
-            label_row = self.add_and_get_label(label)
-            # append issue to label
+            # add/get Label and append Issue row to Label row
+            label_row = self.add_get_label(label)
             issue_row.labels.append(label_row)
 
         # commit any changes in transaction buffer
         self.session.commit()
 
-    # populates each table manually to test relaionships, etc.
     def populate_all(self):
+        # populates each table starting with Repository table
 
-        # populate all labels from config file
-        self.populate_labels()
-
-        # populate Repository,
         self.populate_repos()
 
         # commit any changes in transaction buffer
