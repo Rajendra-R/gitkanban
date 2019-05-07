@@ -12,6 +12,7 @@ class SyncCommand:
         self.config_json = None
         self.args = None
         self.git = None
+        self.session = None
 
     def register(self, subcommands):
         cmd = subcommands.add_parser('sync',
@@ -25,24 +26,24 @@ class SyncCommand:
         cmd.set_defaults(func=self.run)
 
     # get all repos from config_json, get repos' organization
-    def populate_repos(self, session):
+    def populate_repos(self):
         # get list of all repos
         repos = self.get_all_repos()
 
         for repo in repos:
             # add and get repo's Organization
-            organization_row = self.add_and_get_organization(repo, session)
+            organization_row = self.add_and_get_organization(repo)
 
             # create Repository row and add to session
             repository_row = Repository(name=repo.name, description=repo.description,
                                         owner_type=repo.owner.type, owner_id=repo.owner.id,
                                         organization=organization_row)
-            session.add(repository_row)
+            self.session.add(repository_row)
 
             # add all Issue rows from repo
-            self.populate_issues(repo, repository_row, session)
+            self.populate_issues(repo, repository_row)
 
-    def populate_issues(self, repo, repo_row, session):
+    def populate_issues(self, repo, repo_row):
         # get open issues from repo
         open_issues = repo.get_issues(state='open')
 
@@ -50,34 +51,32 @@ class SyncCommand:
 
             # get closed user and add to table
             closed_by = issue.closed_by
-            self.add_and_get_user(closed_by, session)
+            self.add_and_get_user(closed_by)
 
             # create Issue row and add to session
             issue_row = Issue(number=issue.number, title=issue.title,
                               body=issue.body, state=issue.state,
                               closed_at=issue.closed_at, closed_by=issue.closed_by,
                               repository=repo_row)
-            session.add(issue_row)
+            self.session.add(issue_row)
 
             # add all IssueComment rows from issue
-            self.populate_issue_comments(issue, issue_row, session)
+            self.populate_issue_comments(issue, issue_row)
 
-    def populate_issue_comments(self, issue, issue_row, session):
+    def populate_issue_comments(self, issue, issue_row):
         # for each issue get issue comments
         for comment in issue.get_comments():
 
             # add and get IssueComment's User
-            user_row = self.add_and_get_user(comment.user, session)
+            user_row = self.add_and_get_user(comment.user)
 
             # add issue_comment_row
             issue_comment_row = IssueComment(issue=issue_row, user=user_row,
                                              body=comment.body)
-            session.add(issue_comment_row)
-
-        session.commit()
+            self.session.add(issue_comment_row)
 
     # add Label row to session by creating from config file
-    def populate_labels(self, session):
+    def populate_labels(self):
         # get list of label names
         labels = self.config_json['labels']
         label_names = list(labels.keys())
@@ -88,13 +87,11 @@ class SyncCommand:
             description = labels[name]['description']
 
             label_row = Label(name=name, description=description, color=color)
-            session.add(label_row)
-
-        session.commit()
+            self.session.add(label_row)
 
     # add Organization row to session by creating or find existing
     #   :return: Organization row
-    def add_and_get_organization(self, repo, session):
+    def add_and_get_organization(self, repo):
 
         # get organization of repo
         org_git = repo.organization
@@ -105,17 +102,17 @@ class SyncCommand:
             return Organization(login=None, name=None, description=None, email=None)
 
         # if existing Organization
-        if session.query(Organization).filter_by(login=org_git.login).first():
-            org_row = session.query(Organization).filter_by(login=org_git.login).first()
+        if self.session.query(Organization).filter_by(login=org_git.login).first():
+            org_row = self.session.query(Organization).filter_by(login=org_git.login).first()
         else:  # if it doesn't exist, create & add it
             org_row = Organization(login=org_git.login, name=org_git.name,
                                    description=org_git.description, email=org_git.email)
-            session.add(org_row)
+            self.session.add(org_row)
 
         return org_row
 
     # add User row to session if it doesn't exist
-    def add_and_get_user(self, user, session):
+    def add_and_get_user(self, user):
 
         user_row = None
 
@@ -125,13 +122,13 @@ class SyncCommand:
                         email=None, avatar_url=None)
 
         # if existing User
-        if session.query(User).filter_by(login=user.login).first():
-            user_row = session.query(User).filter_by(login=user.login).first()
+        if self.session.query(User).filter_by(login=user.login).first():
+            user_row = self.session.query(User).filter_by(login=user.login).first()
         else:  # if User does not exist, create and add
             user_row = User(name=user.name, login=user.login,
                             company=user.company, location=user.location,
                             email=user.email, avatar_url=user.avatar_url)
-            session.add(user_row)
+            self.session.add(user_row)
 
         return user_row
 
@@ -152,14 +149,14 @@ class SyncCommand:
     def append_issues_labels(self):
         pass
 
-        # populates each table manually to test relaionships, etc.
-    def populate_all(self, session):
+    # populates each table manually to test relaionships, etc.
+    def populate_all(self):
 
         # populate Repository rows
-        self.populate_repos(session)
+        self.populate_repos()
 
         # populate all labels from config file
-        self.populate_labels(session)
+        self.populate_labels()
 
         # append issues to users and issues to labels
         self.append_issues_users()
@@ -179,7 +176,8 @@ class SyncCommand:
         # create session
         Session = sessionmaker()
         Session.configure(bind=engine)
-        session = Session()
+        self.session = Session()
 
         # populate all tables
-        self.populate_all(session)
+        self.populate_all()
+        self.session.commit()
