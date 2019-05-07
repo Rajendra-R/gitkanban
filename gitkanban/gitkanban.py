@@ -899,6 +899,28 @@ class GitKanban(BaseScript):
         pr_cm_co_dates.sort()
         return pr_cm_co_dates[-1]
 
+    def get_last_comment_date(self, issue):
+        # req a issue comments url to get the last comment date if not
+        # consider issue created date
+        comments_url = issue['comments_url']
+        try:
+            res_obj, data = self.make_request(comments_url)
+            last_page = res_obj.links.get('last', {}).get('url', '')
+            if last_page:
+                com_res_obj, data = self.make_request(last_page)
+        except TypeError:
+            return False
+
+        if data:
+            issue_data = data[-1]
+        else:
+            issue_data = issue
+
+        issue_created_at = issue_data['created_at']
+        #TODO: have to consider comment updated date
+        #issue_updated_at = issue_data['updated_at']
+        return issue_created_at
+
     def check_constraint(self, constraint, issue, people, actual_q_name, check_alert_issues):
         time_constraint = constraint.get('time_since_creation', '') or constraint.get('time_since_activity', '')
         # issue already closed but when issue come from our failed table.
@@ -909,29 +931,12 @@ class GitKanban(BaseScript):
             if check_alert_issues:
                 issue_created_at = self.get_pr_recent_time(issue)
             else:
-                issue_created_at = issue['created_at']
+                issue_created_at = self.get_last_comment_date(issue)
         # For inbox issues
         elif not actual_q_name:
             issue_created_at = issue['created_at']
         else:
-            # req a issue comments url to get the last comment info
-            comments_url = issue['comments_url']
-            try:
-                res_obj, data = self.make_request(comments_url)
-                last_page = res_obj.links.get('last', {}).get('url', '')
-                if last_page:
-                    com_res_obj, data = self.make_request(last_page)
-            except TypeError:
-                return False
-
-            if data:
-                issue_data = data[-1]
-            else:
-                issue_data = issue
-
-            issue_created_at = issue_data['created_at']
-            #TODO: have to consider comment updated date
-            #issue_updated_at = issue_data['updated_at']
+            issue_created_at = self.get_last_comment_date(issue)
 
         # based on our custom timezone logic of a person change the issue created time
         issue_created_at = self.get_issue_created_datetime(issue_created_at, people)
@@ -1029,21 +1034,22 @@ class GitKanban(BaseScript):
             co_queue_name = co.get('queue', '')
             actual_q_name = queues[co_queue_name]
             # add params from config before going to request
-            if repo.get('label', ''):
-                label_names = "{},{}".format(actual_q_name, repo['label'])
-                params = {"labels": label_names}
-            else:
-                if not actual_q_name:
-                    params = {}
-                else:
-                    params = {"labels": actual_q_name}
-
-            if repo.get('assignee', ''):
-                params['assignee'] = repo['assignee']
-
             if check_alert_issues:
                 req_url = record['issue_url']
+                params = {}
             else:
+                if repo.get('label', ''):
+                    label_names = "{},{}".format(actual_q_name, repo['label'])
+                    params = {"labels": label_names}
+                else:
+                    if not actual_q_name:
+                        params = {}
+                    else:
+                        params = {"labels": actual_q_name}
+
+                if repo.get('assignee', ''):
+                    params['assignee'] = repo['assignee']
+
                 # req a repo url to get the issues, default will get only open issues
                 req_url = ISSUE_URL.format(repo_name)
 
