@@ -143,7 +143,9 @@ class GitKanban(BaseScript):
                 record['issue_url'],
                 record['datetime'],
                 record['alert_issue_id'],
-                record['escalation_hierarchy']
+                record['escalation_hierarchy'],
+                record['repo'],
+                record['repo_group']
             )
             self.log.info("remove_assignee_to_existing_alert", p_names=remove_p_list)
 
@@ -176,7 +178,9 @@ class GitKanban(BaseScript):
                     record['issue_url'],
                     TIMESTAMP_NOW(),
                     record['alert_issue_id'],
-                    record['escalation_hierarchy']
+                    record['escalation_hierarchy'],
+                    record['repo'],
+                    record['repo_group']
                 )
                 self.log.info("add_assignee_to_existing_alert", **alert_msg)
             else:
@@ -212,7 +216,9 @@ class GitKanban(BaseScript):
                     alert_msg['issue_url'],
                     TIMESTAMP_NOW(),
                     alert_issue.number,
-                    alert_msg['ownership_hierarchy']
+                    alert_msg['ownership_hierarchy'],
+                    alert_msg['repo_name'],
+                    alert_msg['repo_group_name']
                 )
                 self.log.info('successfully_inserted_alert_to_github')
         except GithubException as e:
@@ -276,7 +282,9 @@ class GitKanban(BaseScript):
                 record['issue_url'],
                 TIMESTAMP_NOW(),
                 record['alert_issue_id'],
-                t_alerts
+                t_alerts,
+                record['repo'],
+                record['repo_group']
             )
             return
 
@@ -303,7 +311,9 @@ class GitKanban(BaseScript):
             record['issue_url'],
             TIMESTAMP_NOW(),
             record['alert_issue_id'],
-            own_hi
+            own_hi,
+            record['repo'],
+            record['repo_group']
         )
         self.log.info('send_escalation_msg')
 
@@ -1333,6 +1343,8 @@ class GitKanban(BaseScript):
                 cons_name = record['constraint_name']
                 issue_url = record['issue_url']
                 p_name = record['person']
+                repo_name = record['repo']
+                self.repo_group_name = record['repo_group']
                 if "{}:{}:{}".format(cons_name, p_name, issue_url) in already_alert:
                     continue
                 tmp_check_list = {}
