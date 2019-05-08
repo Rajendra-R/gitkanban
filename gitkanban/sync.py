@@ -37,7 +37,7 @@ class SyncCommand:
             # create Repository row and add to session
             repository_row = Repository(name=repo.name, description=repo.description,
                                         owner_type=repo.owner.type, owner_id=repo.owner.id,
-                                        organization=organization_row)
+                                        organization=organization_row, node_id=repo.raw_data['node_id'])
             self.session.add(repository_row)
 
             # add all Issue rows from repo
@@ -63,14 +63,13 @@ class SyncCommand:
 
         for issue in issues:
             # get closed_by User and add to table
-            closed_by = issue.closed_by
-            self.add_get_user(closed_by)
+            closed_by = self.add_get_user(issue.closed_by)
 
             # create Issue row and add to session
             issue_row = Issue(number=issue.number, title=issue.title,
                               body=issue.body, state=issue.state,
-                              closed_at=issue.closed_at, closed_by=issue.closed_by,
-                              repository=repo_row)
+                              closed_at=issue.closed_at, closed_by=closed_by,
+                              repository=repo_row, node_id=issue.raw_data['node_id'])
             self.session.add(issue_row)
 
             # populate all Label rows from issue
@@ -99,11 +98,13 @@ class SyncCommand:
 
             # create IssueComment row and add to session
             issue_comment_row = IssueComment(issue=issue_row, user=user_row,
-                                             body=comment.body)
+                                             body=comment.body, node_id=comment.raw_data['node_id'])
             self.session.add(issue_comment_row)
 
         # commit any changes in transaction buffer
         self.session.commit()
+
+    # TODO: possibly choose better attributes for query filter_by lookups?
 
     # add Label row to session by creating from repo
     def populate_labels(self, labels):
@@ -116,15 +117,17 @@ class SyncCommand:
         label_row = None
 
         for label in labels:
-            # if there is no label, return empty Label
-            if not label:
-                return Organization(name=None, description=None, color=None)
+            # if there is no label, return None
+            if label is None:
+                return None
 
             # if existing Label
-            if self.session.query(Label).filter_by(name=label.name).first():
-                label_row = self.session.query(Label).filter_by(name=label.name).first()
+            if self.session.query(Label).filter_by(node_id=label.raw_data['node_id']).first():
+                label_row = self.session.query(Label).filter_by(
+                    node_id=label.raw_data['node_id']).first()
             else:  # create and add
-                label_row = Label(name=label.name, description=label.description, color=label.color)
+                label_row = Label(name=label.name, description=label.description,
+                                  color=label.color, node_id=label.raw_data['node_id'])
                 self.session.add(label_row)
 
         # commit any changes in transaction buffer
@@ -139,16 +142,18 @@ class SyncCommand:
 
         org_row = None
 
-        # if there is no organization, return empty Organization
-        if not org:
-            return Organization(login=None, name=None, description=None, email=None)
+        # if there is no organization, return None
+        if org is None:
+            return None
 
         # if existing Organization
-        if self.session.query(Organization).filter_by(login=org.login).first():
-            org_row = self.session.query(Organization).filter_by(login=org.login).first()
+        if self.session.query(Organization).filter_by(node_id=org.raw_data['node_id']).first():
+            org_row = self.session.query(Organization).filter_by(
+                node_id=org.raw_data['node_id']).first()
         else:  # create and add
             org_row = Organization(login=org.login, name=org.name,
-                                   description=org.description, email=org.email)
+                                   description=org.description, email=org.email,
+                                   node_id=org.raw_data['node_id'])
             self.session.add(org_row)
 
         # commit any changes in transaction buffer
@@ -165,18 +170,18 @@ class SyncCommand:
 
         user_row = None
 
-        # if there is no user, return empty User
-        if not user:
-            return User(name=None, login=None, company=None, location=None,
-                        email=None, avatar_url=None)
+        # if there is no user, return None
+        if user is None:
+            return None
 
         # if existing User
-        if self.session.query(User).filter_by(login=user.login).first():
-            user_row = self.session.query(User).filter_by(login=user.login).first()
+        if self.session.query(User).filter_by(node_id=user.raw_data['node_id']).first():
+            user_row = self.session.query(User).filter_by(node_id=user.raw_data['node_id']).first()
         else:  # create and add
             user_row = User(name=user.name, login=user.login,
                             company=user.company, location=user.location,
-                            email=user.email, avatar_url=user.avatar_url)
+                            email=user.email, avatar_url=user.avatar_url,
+                            node_id=user.raw_data['node_id'])
             self.session.add(user_row)
 
         # commit any changes in transaction buffer
@@ -193,15 +198,17 @@ class SyncCommand:
 
         label_row = None
 
-        # if there is no Label, return empty Label
-        if not label:
-            return Label(name=None, description=None, color=None)
+        # if there is no Label, return None
+        if label is None:
+            None
 
         # if existing Label
-        if self.session.query(Label).filter_by(name=label.name).first():
-            label_row = self.session.query(Label).filter_by(name=label.name).first()
+        if self.session.query(Label).filter_by(node_id=label.raw_data['node_id']).first():
+            label_row = self.session.query(Label).filter_by(
+                node_id=label.raw_data['node_id']).first()
         else:  # create and add
-            label_row = Label(name=label.name, description=label.description, color=label.color)
+            label_row = Label(name=label.name, description=label.description,
+                              color=label.color, node_id=label.raw_data['node_id'])
             self.session.add(label_row)
 
         # commit any changes in transaction buffer

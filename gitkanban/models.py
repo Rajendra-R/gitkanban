@@ -8,29 +8,12 @@ Base = declarative_base()
 
 
 class BaseMixin:
-    # __table_args__(UniqueConstraint('id', 'node_id'))
 
-    # required attributes
-    # id = Column(Integer, primary_key=True, nullable=False)
-    # node_id = Column(String(128), nullable=False)
     id = Column(Integer, primary_key=True)
     node_id = Column(String(128))
 
     created_at = DateTime()
     updated_at = DateTime()
-
-    # validates value; cannot be empty
-    # @validates('id')
-    # def validate_id(self, key, value):
-    #     assert value != ''
-    #     assert value != None
-    #     return value
-    #
-    # @validates('node_id')
-    # def validate_node_id(self, key, value):
-    #     assert value != ''
-    #     assert value != None
-    #     return value
 
 
 class Organization(BaseMixin, Base):
