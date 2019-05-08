@@ -1543,11 +1543,7 @@ class GitKanban(BaseScript):
                                 if label_person in peoples_blacklist or not label_person in dc_peoples_list:
                                     continue
 
-                                people = peoples[label_person]
-                                if not people.get('work_hours', {}):
-                                    people['work_hours'] = self.config_json.get('defaults', {})['work_hours']
-                                if not people.get('location', ''):
-                                    people['location'] = self.config_json.get('defaults', {})['location']
+                                people = self.get_people_info(peoples, label_person)
 
                                 p_location = people['location']
                                 p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
