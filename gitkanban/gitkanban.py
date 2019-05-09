@@ -187,9 +187,11 @@ class GitKanban(BaseScript):
                 labels=[
                     '{}-priority'.format(alert_msg['priority']),
                     '{}-repo'.format(alert_msg['repo_name']),
-                    '{}-queue'.format(alert_msg['queue_name']),
                     '{}-constraint'.format(alert_msg['constraint_name'])
                 ]
+                if alert_msg['queue_name']:
+                    labels.append('{}-queue'.format(alert_msg['queue_name']))
+
                 if alert_msg['repo_group_name']:
                     labels.append('{}-repo-group'.format(alert_msg['repo_group_name']))
 
@@ -198,8 +200,10 @@ class GitKanban(BaseScript):
                 issue_id = "{}#{}".format(alert_msg['repo_name'], alert_msg['issue_no'])
                 time_since_activity = alert_msg['time_since_activity']
                 time_since_creation = alert_msg['time_since_creation']
+                time_since_labeled = alert_msg['time_since_labeled']
                 alert_title = alert_msg['constraint_title'].format(issue_title=issue_title, issue_id=issue_id,
-                    time_since_activity=time_since_activity, time_since_creation=time_since_creation)
+                    time_since_activity=time_since_activity, time_since_creation=time_since_creation,
+                    time_since_labeled=time_since_labeled)
                 alert_desc = alert_msg['constraint_desc']
                 if not alert_desc:
                     alert_desc = alert_title
@@ -921,17 +925,32 @@ class GitKanban(BaseScript):
         #issue_updated_at = issue_data['updated_at']
         return issue_created_at
 
-    def check_constraint(self, constraint, issue, people, actual_q_name, check_alert_issues):
-        time_constraint = constraint.get('time_since_creation', '') or constraint.get('time_since_activity', '')
+    def check_constraint(self, constraint, issue, people, actual_q_name, check_alert_issues, needs_update_labels):
+        time_constraint = constraint.get('time_since_creation', '') or \
+                          constraint.get('time_since_activity', '') or \
+                          constraint.get('time_since_labeled', '')
         # issue already closed but when issue come from our failed table.
         if issue['state'] == "closed":
             return False
+
+        # For needs update issues
+        elif constraint.get('time_since_labeled', ''):
+            get_nup_time = []
+            get_nup_time.append(self.get_last_comment_date(issue))
+            _, nup_label_time = self.get_recent_label_time(issue, needs_update_labels)
+            get_nup_time.append(nup_label_time)
+
+            # pick the recent action date
+            get_nup_time.sort()
+            issue_created_at = get_nup_time[-1]
+
         # For pull request issues
         elif issue.get('commits_url', ''):
             if check_alert_issues:
                 issue_created_at = self.get_pr_recent_time(issue)
             else:
                 issue_created_at = self.get_last_comment_date(issue)
+
         # For inbox issues
         elif not actual_q_name:
             issue_created_at = issue['created_at']
@@ -980,6 +999,20 @@ class GitKanban(BaseScript):
 
         return people
 
+    def generate_needs_update_constraints(self):
+        nup_list = []
+        needs_update = self.config_json.get('needs_update', {})
+        nup_labels = needs_update.get('labels', [])
+        nup_constraint = needs_update.get('constraint', {})
+        for nul in nup_labels:
+            nup_const = copy.deepcopy(nup_constraint)
+            nup_const['name'] = nup_const['name'].format(label_name=nul['name'])
+            nup_const['label'] = nup_const['label'].format(label_name=nul['name'])
+            nup_const['time_since_labeled'] = nup_const['time_since_labeled'].format(label_time=nul['time'])
+            nup_list.append(nup_const)
+
+        return nup_list
+
     def check_constraints(self):
         # prepare owndership index from the given config file
         # d = [{'a': 'a1', 'b': 'b1', 'c': 'c1'}, {'a': 'a1', 'd': 'd1'}, {'b': 'b1'}, {'e': 'e1'}]
@@ -1002,6 +1035,8 @@ class GitKanban(BaseScript):
                     ownership_index[key] = value
 
         constraints = self.config_json.get('constraints', [])
+        # add needs update constraint
+        constraints.extend(self.generate_needs_update_constraints())
         co_info = {}
         for i in constraints:
             if isinstance(i, list):
@@ -1027,16 +1062,31 @@ class GitKanban(BaseScript):
         for k, v in rgl.items():
             repo_group_labels.append(v['name'])
 
+        # get all needs_update label names
+        nul = self.config_json.get('needs_update', {}).get('labels', [])
+        needs_update_labels = [ l['name'] for l in nul ]
+
         # sub function
         def __check_constraints(self, co=None, check_alert_issues=False, record=None):
             if check_alert_issues:
                 co = co_info[record['constraint_name']]
             co_queue_name = co.get('queue', '')
-            actual_q_name = queues[co_queue_name]
+            actual_q_name = queues.get(co_queue_name, None)
             # add params from config before going to request
             if check_alert_issues:
                 req_url = record['issue_url']
                 params = {}
+                if co.get('label', ''):
+                    actual_q_name = co['label']
+
+            # needs update condition
+            elif co.get('label', ''):
+                co_label = co.get('label', '')
+                params = {"labels": co_label}
+                actual_q_name = co_label
+
+                # req a repo url to get the issues, default will get only open issues
+                req_url = ISSUE_URL.format(repo_name)
             else:
                 if repo.get('label', ''):
                     label_names = "{},{}".format(actual_q_name, repo['label'])
@@ -1192,6 +1242,7 @@ class GitKanban(BaseScript):
                             "constraint_name": co['name'],
                             "time_since_activity": co.get('time_since_activity', ''),
                             "time_since_creation": co.get('time_since_creation', ''),
+                            "time_since_labeled": co.get('time_since_labeled', ''),
                             "queue_name": co['queue'],
                             "constraint_title": co['title'],
                             "constraint_desc": co['description'],
@@ -1203,7 +1254,7 @@ class GitKanban(BaseScript):
                         }
 
                         # check the constraint is pass/not
-                        if self.check_constraint(co, issue, people, actual_q_name, check_alert_issues):
+                        if self.check_constraint(co, issue, people, actual_q_name, check_alert_issues, needs_update_labels):
                             # check the person is in work_hours
                             if not self.check_person_is_in_work_hours(people):
                                 continue
@@ -1443,7 +1494,7 @@ class GitKanban(BaseScript):
 
         return (None, None)
 
-    def get_snooze_label_time(self, issue, snooze_labels_list):
+    def get_recent_label_time(self, issue, snooze_labels_list):
         events_url = issue['events_url']
         try:
             r_obj, event_list = self.make_request(events_url)
@@ -1528,7 +1579,7 @@ class GitKanban(BaseScript):
                         break
 
                     for issue in issues_list:
-                        label_person, snooze_time = self.get_snooze_label_time(issue, snooze_labels_list)
+                        label_person, snooze_time = self.get_recent_label_time(issue, snooze_labels_list)
                         if snooze_time:
                             time_elapsed = l_time
                             check_time = CHECK_SNOOZE_TIME.match(l_time)
