@@ -22,6 +22,7 @@ from basescript import BaseScript
 
 from .constraints_state import ConstraintsStateDB
 from .exceptions import *
+from .sync import SyncCommand
 
 TIMESTAMP_NOW = lambda : datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 ISSUE_URL = 'https://api.github.com/repos/{}/issues'
@@ -115,6 +116,10 @@ class GitKanban(BaseScript):
             help="remind the issues after time duration"
         )
         snooze_cmd.set_defaults(func=self.snooze)
+
+        # sync sub-command
+        sync_cmd = SyncCommand(self)
+        sync_cmd.register(subcommands)
 
     def update_alert_issue_with_issue_assignees(self, alert_repo, record, peoples_list, alert_msg, esc_people):
         existed_names = record['person'].split(',')
