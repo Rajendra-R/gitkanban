@@ -7,6 +7,7 @@ script:
 - echo "No tests"
 deploy:
   - provider: releases
+    skip_cleanup: true
     api_key:
         secure: NzBKuHBOxaOEsvXoGxwSwwPdTDi8I8DaFXHwpRNBLpxwuTo0fpDhIeMXcnIxlj1EXUtL1QkHOKQgVb7YW7Va/6wVQSrnlGR7gVas07KIeVdIwheh54K+0WtfL6ZxswcRSgoo62meIwxSsgmJRM9KAJqeWUb3KJVRlrrl3MWPo3kyxiGMCyqkayRFiXu1aAiHyPYoCuPysDnYNzYKEKw/326pilbW8/xa7NnKpXIhPUdKzcz4U/d1l0LzI3Rl6GK9sb8gShcH1FRVa3SYIeSi++/VjCgGBHmktnl4La+U+oewZQx56Zq2+3RAznUCLMlMjb9jr98XJq9a1APHmVXcaVMWohba5rWsG/nGtf7/uk0Nb75I18I+EatBHFoLBLPU1lf/dgiEXNaxoGRlS0DnhFJJvZe5JDQeBrwwZZvfslcIJToSIpat7s2kvSIsxOF2juhzXIfxMgMRRXLiYCcduUHWa2VQtMeKPXe7okMH7OonOb0hA0DXif6CNW5e0/H7vQ63T6KHZtHbQLUCAD+3Uy8s263OFGB0Z4zDDyyI9WRBLntyFmFjOEl+rnQc+F+vl9TU65DHtHJFv8XZ1+yakZOSwmPsmVfoTuJ8P1hA4v380GN7qrvInMWhWR6cE+2YVMGHIXQiSqAjqCwJCLivaFJk05qdwWLoCiqxakf8XM4=
     on:
