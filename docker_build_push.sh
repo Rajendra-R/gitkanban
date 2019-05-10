@@ -1,3 +1,4 @@
+#!/bin/bash
 echo $1 | docker login -u $2 --password-stdin
 echo "started to build a docker image"
 docker build -t deepcompute/gitkanban:gitkanban-$3 .
