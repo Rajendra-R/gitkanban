@@ -13,14 +13,12 @@ deploy:
   on:
     repo: deep-compute/gitkanban
     tags: true
-
 - provider: pypi
   distributions: sdist bdist_wheel
   skip_cleanup: true
-  user: "deepcompute"
+  user: deepcompute
   password:
-    secure: "cfoZUiCmZx24WfJHDBa7AUfFQfTmqOGQQchKv9PlNYW20bN5D96apT1L5fCiy8aXizcEfy8755e5R3/D19/z7loyUFY/0cwk7dNCcBxSTb9xMtlzytjYiMhBX5hMcJpvKR54ozVoFIk7vdyiKOxG50WnzD8sw9rzsDaZMIWqFHi2PumbpxRpTuTFrTM9XO+N2SST6YByApYAHx3TjBZuo+s8tZMJnLwsldWZLfaJCE4CJ/y2q9ACgTt92iUwgS/WZuhnjNN1ITA1cYYYeFben9FL0L47tIW8o3rVs1iI7C55ia36ifug3dY01Gg+MLtmjrz1q7uyJEWQqw4Ve+DP/HVcgCAban+i3jadz/nyaE0/SRZxu6AEwSicxTMpByHJwfYhQdV3tIJkez2gjYsrDrF+x8cnnVdqyJoAXhyh2TgTwfsy9GKyRneS66TPJP0yyMvjs2kQXUCGcwsGYpar9OnmTLCDOqyW4sEeKyrYT74oVsw4EfetYveglKzsU/+KMf1nosctkG/4aZGG84BmHM4zaup9aEghH44oXd3/WVz25oA2xpda8N608aWTkaWzrewXnTZdXhmOidSeozpmVwAsdtdPpPrD7IKB7hFIjC2nH/yTVJx4IAi/2p2PBkVLm20WNMV/t7eYK4h8WkSH/V9c+x92tjBDKyDVyiIkJLo="
+    secure: eF8hsqBJIQsK8GxXc4/1d5kd0Cmi3RpOCH5LlU/6G/+J3Rgo6Y7R9tKUCj889uAlRG6gN3pvYmLqtRxSUClWrG3u7YV9rBTQ9cReND8YHfQHemskcG0VoFjkZT2SsVW7NDDdGMMaOB8ucfoxlFK97TFf9cMfkoMG2cMsf+xG/fxrie6D2U30RybTKcsIMT8oD6MILbupY0Gx9brCwnfoZ5hHyAyPzCoJpOPEc9v/7NsLS190wCqd6JUXxB0dw465sBPS5OJCae1zm4pZG1v3RIq7ybCgTIWgKY8dB8F/xKWdKh5tnNAJVuCC1pT59JXfDqjV4CW4aJsFTgxTlfE1vLuOSfwSbTZNiI12A2HNhdiEEdsf32OiwPiMc3/yJuwV808ArOpTZauvJPWkogUoxnEmwT+swX89bKZ3M2x7qd6CxpvkDh1b9lRi9r+DAc75FpK+r7i/F9PskqMtVnH+aVXQ9QD+dXz9AZjqd/a7AtLTZs4OC3Ydy3qNn/xc2k2hUaVGcdzYMQdp3ugXsWV7SNKja9iaQ59i64buJ1o8O5a4Cfa/Kv9WGXflHdp9f9XRHmD+JdXYSCNNaIouM/q/VaCjkHBii1aA/YnysBCw/JqspQU/gKNP2EV8Eo1nPczGFm0xRvGrqgYvcvnIT437eMJ/FCVT5+OLkgVcdBWCPZU=
   on:
     branch: master
     tags: true
-
