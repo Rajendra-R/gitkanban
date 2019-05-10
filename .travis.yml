@@ -26,3 +26,6 @@ deploy:
 - provider: script
   skip_cleanup: true
   script: ./docker_build_push.sh $DOCKER_PASSWORD $DOCKER_USERNAME $TRAVIS_TAG
+  on:
+    branch: master
+    tags: true
