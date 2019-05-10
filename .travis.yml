@@ -9,10 +9,11 @@ deploy:
 - provider: releases
   skip_cleanup: true
   api_key:
-    secure: LsEEFkWWq5J6GodJMa/pBkGIBGsT1XwTBTOooMTPoGi3l5+Wr5WpTFeHDDc6m4gNrDQ5TJvhqznpUW5JptXoLtAtd/+CM5XUYJXqb+KoKa1tqZLH4Z6XALFJ4H3jfGw7uX4AkwA2sZJBslCjFJyyxeP7WJhkAcKRzrXxYRQG50wewdu1vEUNyt60CNKyJugr5LxHD0RfcGomY4O/NBolpKR+6PjR7nmaG2lHcFCVq8XYnIFHLTUunkb/znX1pNruCzSqrCC7+Gt8IkaOKIsx+QOcPy9SaukZlMgVI8DAYUN366Mqs9d+m56z0r8ec+2fxCmBiBcjb7K6pbYxL5DpBdfX9I5g6p123vn3QRHbhq8DmT+rCb3xkW+R/9jKXgy+ZNVljeZuVbVZOskrmcVuyP7V74B2jYxAu/h6YxyQkPioCsDQbwCNht8NSaew/b27j/wGPOTEFf0zGmJOxp2FaJLRjTO/b8TXX7HbmO4oKutTrVH9vDwJVA6f0v4UnRaqXgb0mFgect3EiP5z0jcGA4vvy6fyK4suTQdL8ypqqnhVbumaFDz2xogH9CZFr8sPTTvf0+BcHKw70tQFDiektguHYML3K8xYZvCQBp52QNpZU69lrbfJhbG7L0xjczv1N2SGMXf3FxU7RYPMYIeHTWBzvNIg6GqgOAGxFmWgZBY=
+    secure: GDblvxAKNpdjc8WJVf1FlihkZy6ZGVT+Cibmiy7nfDNCEx6qETlF3Kpy05nXc88NYCF33dCZWsyhZPTZTS7GFRlAeU5fHM17oKcTiA05id8EJ5irYJB7kKaGp0zr+z0XmdkjfXq6d1HZImioyw2ng/so0249e36YT/xLMkEgGwyszh8gcRIsgHa4iwxoNXdo9U7WTmF7ud1A6JVByMcncjePlP2mBvQFFiZ5oeyZrSMmi/iiCK/qVCxQh/y+soAMFAA+eI0mbV+DfkYZO3glCOmrSgkR704EhzCWCZHqCW79u635KQjhT1Vr6NQcqNGxp5m7fhCYjy8nkDoulE4j3CTtsfGr/OYUxNjM3tV3mwmucIDMZZ7l5gMro/Erfc5+RpN+vEwO92d69NVc7O3IG4BMyfmK33fGNe9iwGO+Cd8AJMaTFzXw53Qb4iDJrIqjJzh45IXinlw2XB4tSjiPVPGrcKz5TzubbY0H1oOw/yWSXWpJ0m8cBSuQ6/3XMf/BhyMnogxtGhIZRbXt7OmdktBvfoh+qELuq8qnKKGBvb2ILPzlmuG85+XEm9x6hBVPmCh/thdhFjYgEX1qBNZIvFXYA4veLM95KZuJKmdQMa2ygXthygGLHKLgoXotECruF/jXC1u4Skn1rNDUq0Rj9P+N2KhG98E0kqGjHdDdajc=
   on:
     repo: deep-compute/gitkanban
     tags: true
+
 - provider: pypi
   distributions: sdist bdist_wheel
   skip_cleanup: true
@@ -22,3 +23,4 @@ deploy:
   on:
     branch: master
     tags: true
+
