@@ -3,6 +3,8 @@ python:
 - '3.6'
 install:
 - pip install .
+script:
+- echo "No tests"
 deploy:
   - provider: releases
     api_key:
