@@ -1,29 +1,61 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
 from .models import Base
 from .models import Organization, Repository, issue_user_assignee_rel_table, \
     issue_label_rel_table, Issue, IssueComment, User, Label
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+import tornado.ioloop
+import tornado.web
+
+class ListenHandler(tornado.web.RequestHandler):
+    def initialize(self, log):
+        self.log = log
+
+    def post(self):
+        # FIXME: Add code to verify that the source of the event is indeed
+        # Github
+
+        import json
+        from pygments import highlight
+        from pygments.lexers import JsonLexer
+        from pygments.formatters import TerminalFormatter
+
+        data = dict(body=json.loads(self.request.body), headers=dict(self.request.headers))
+        _data = json.dumps(data, indent=4, sort_keys=True)
+        print(highlight(_data, JsonLexer(), TerminalFormatter()))
 
 class SyncCommand:
+    PORT = 8888
+
     def __init__(self, gitkanban):
         self.gitkanban = gitkanban
         self.config_json = None
         self.args = None
+        self.log = None
         self.git = None
         self.session = None
 
     def register(self, subcommands):
         cmd = subcommands.add_parser('sync',
-                                     help='Sync full state from Github')
+                                     help='Sync state from Github')
         cmd.add_argument('--db', required=True, type=str,
                          help='''SQLAlchemy Engine Connection String
             eg: mysql://scott:tiger@localhost/foo
             eg: sqlite:////tmp/test.db
             Refer: https://docs.sqlalchemy.org/en/13/core/engines.html
             ''')
-        cmd.set_defaults(func=self.run)
+
+        subcommands = cmd.add_subparsers()
+
+        full_cmd = subcommands.add_parser('full',
+                help='One-time full sync from Github via v3 API')
+        full_cmd.set_defaults(func=self.cmd_full_sync)
+
+        listen_cmd = subcommands.add_parser('listen',
+                help='Real-time incremental sync from Github via Webhooks')
+        listen_cmd.add_argument('--port', type=int, default=self.PORT)
+        listen_cmd.set_defaults(func=self.cmd_listen)
 
     def populate_repos(self):
         # populate Repository table
@@ -264,7 +296,7 @@ class SyncCommand:
         # commit any changes in transaction buffer
         self.session.commit()
 
-    def run(self):
+    def cmd_full_sync(self):
         self.config_json = self.gitkanban.config_json
         self.args = self.gitkanban.args
         self.git = self.gitkanban.git
@@ -282,3 +314,15 @@ class SyncCommand:
 
         # populate all tables
         self.populate_all()
+
+    def cmd_listen(self):
+        self.config_json = self.gitkanban.config_json
+        self.args = self.gitkanban.args
+        self.log = self.gitkanban.log
+
+        app = tornado.web.Application([
+            (r'/listen', ListenHandler, dict(log=self.log)),
+        ])
+
+        app.listen(self.args.port)
+        tornado.ioloop.IOLoop.current().start()
