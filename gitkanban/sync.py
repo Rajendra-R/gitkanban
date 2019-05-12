@@ -8,6 +8,21 @@ from sqlalchemy.orm import sessionmaker
 import tornado.ioloop
 import tornado.web
 
+
+# important events and actions
+TRIGGERS = {
+    "issue_comment": ["created", "edited", "deleted"],
+    "issues": ["opened", "edited", "deleted", "transferred", "closed", "reopened", "assigned", "unassigned", "labeled", "unlabeled"],
+    "label": ["created", "edited", "deleted"],
+    "organization": ["deleted", "renamed"],
+    "repository": ["created", "renamed", "edited", "deleted"]
+}
+
+# host and endpoint for create_webhook
+HOST = "example.com"
+ENDPOINT = "abc123"
+
+
 class ListenHandler(tornado.web.RequestHandler):
     def initialize(self, log):
         self.log = log
@@ -24,6 +39,7 @@ class ListenHandler(tornado.web.RequestHandler):
         data = dict(body=json.loads(self.request.body), headers=dict(self.request.headers))
         _data = json.dumps(data, indent=4, sort_keys=True)
         print(highlight(_data, JsonLexer(), TerminalFormatter()))
+
 
 class SyncCommand:
     PORT = 8888
@@ -49,13 +65,25 @@ class SyncCommand:
         subcommands = cmd.add_subparsers()
 
         full_cmd = subcommands.add_parser('full',
-                help='One-time full sync from Github via v3 API')
+                                          help='One-time full sync from Github via v3 API')
         full_cmd.set_defaults(func=self.cmd_full_sync)
 
         listen_cmd = subcommands.add_parser('listen',
-                help='Real-time incremental sync from Github via Webhooks')
+                                            help='Real-time incremental sync from Github via Webhooks')
         listen_cmd.add_argument('--port', type=int, default=self.PORT)
         listen_cmd.set_defaults(func=self.cmd_listen)
+
+    def create_webhook(self, repo):
+        # creates a webhook for the specified repository
+
+        events = list(TRIGGERS.keys())
+
+        config = {
+            "url": "http://{host}/{endpoint}".format(host=HOST, endpoint=ENDPOINT),
+            "content_type": "json"
+        }
+
+        repo.create_hook(name='web', config=config, events=events, active=True)
 
     def populate_repos(self):
         # populate Repository table
@@ -71,6 +99,9 @@ class SyncCommand:
                                         owner_type=repo.owner.type, owner_id=repo.owner.id,
                                         organization=organization_row, node_id=repo.raw_data['node_id'])
             self.session.add(repository_row)
+
+            # create web hook for this repository
+            self.create_webhook(repo)
 
             # add all Issue rows from repo
             self.populate_issues(repo, repository_row)
