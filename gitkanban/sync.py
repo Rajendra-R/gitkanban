@@ -1,6 +1,4 @@
-from .models import Base
-from .models import Organization, Repository, issue_user_assignee_rel_table, \
-    issue_label_rel_table, Issue, IssueComment, User, Label
+import json
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -8,41 +6,282 @@ from sqlalchemy.orm import sessionmaker
 import tornado.ioloop
 import tornado.web
 
+import requests
+from deeputil import Dummy
 
-# important events and actions
-TRIGGERS = {
-    "issue_comment": ["created", "edited", "deleted"],
-    "issues": ["opened", "edited", "deleted", "transferred", "closed", "reopened", "assigned", "unassigned", "labeled", "unlabeled"],
-    "label": ["created", "edited", "deleted"],
-    "organization": ["deleted", "renamed"],
-    "repository": ["created", "renamed", "edited", "deleted"]
-}
+from .models import Base
+from .models import Organization, Repository, issue_user_assignee_rel_table, \
+    issue_label_rel_table, Issue, IssueComment, User, Label
 
+
+DUMMY_LOG = Dummy()
+
+
+# FIXME: remove after adding command line param to sync command
 # host and endpoint for create_webhook
-HOST = "example.com"
-ENDPOINT = "abc123"
+HOST = "dfedbba0"
+ENDPOINT = "ngrok.io"
 
 
 class ListenHandler(tornado.web.RequestHandler):
-    def initialize(self, log):
+    def initialize(self, session, engine, event_filter_config, log=DUMMY_LOG):
         self.log = log
+        self.session = session
+        self.engine = engine
+        self.event_filter_config = event_filter_config
 
     def post(self):
         # FIXME: Add code to verify that the source of the event is indeed
         # Github
 
-        import json
-        from pygments import highlight
-        from pygments.lexers import JsonLexer
-        from pygments.formatters import TerminalFormatter
+        # handle the event/action by passing to corresponding functions
+        event = json.loads(self.request.body.decode('utf8'))
+        action = event['action']
+        event_name = self.request.headers['x-github-event']
 
-        data = dict(body=json.loads(self.request.body), headers=dict(self.request.headers))
-        _data = json.dumps(data, indent=4, sort_keys=True)
-        print(highlight(_data, JsonLexer(), TerminalFormatter()))
+        econf = self.event_filter_config
+        if not (event_name in econf and action in econf[event_name]):
+            # Terminate event processing as we don't want this event
+            return
+
+        try:
+            handler_fn = getattr(self, 'handle_{}'.format(event_name))
+            if not handler_fn:
+                self.log.warning('missing_event_handler', _event=event_name, action=action)
+                return
+
+            handler_fn(event, action)
+
+        except Exception:
+            self.log.exception('event_handling_failed', _event=event_name, action=action)
+
+    def add_get_user(self, user):
+        # return User if exists, else create and return
+        r = requests.get(user['url'])
+        user = r.json()
+
+        if self.session.query(User).filter_by(node_id=user['node_id']).first():
+            return self.session.query(User).filter_by(node_id=user['node_id']).first()
+        else:
+            user_row = User(name=user['name'], login=user['login'],
+                            company=user['company'], location=user['location'],
+                            email=user['email'], avatar_url=user['avatar_url'],
+                            node_id=user['node_id'], id=user['id'])
+            self.session.add(user_row)
+            self.session.commit()
+            return user_row
+
+    def add_get_label(self, label):
+        # return Label if exists, else create and return
+
+        if self.session.query(Label).filter_by(node_id=label['node_id']).first():
+            return self.session.query(Label).filter_by(node_id=label['node_id']).first()
+        else:
+            label_row = Label(name=label['name'], description=None,
+                              color=label['color'], node_id=label['node_id'],
+                              id=label['id'])
+
+            self.session.add(label_row)
+            self.session.commit()
+            return label_row
+
+    def handle_organization(self, event, action):
+        # organization: deleted, renamed
+
+        # for query by node_id
+        org_node = event['organization']['node_id']
+
+        if action == 'deleted':
+            self.session.query(Organization).filter_by(node_id=org_node).delete()
+            self.session.commit()
+
+        if action == 'renamed':
+            org = self.session.query(Organization).filter_by(node_id=org_node).first()
+            org.name = event['organization']['name']
+            self.session.commit()
+
+    def handle_repository(self, event, action):
+        # repository: created, renamed, edited, deleted
+
+        if action == 'created':
+            # get repo's Organization
+            r = requests.get(event['repository']['owner']['organizations_url'])
+            org_node = r.json()['node_id']
+            organization_row = self.session.query(Organization).filter_by(node_id=org_node).first()
+
+            # create Repository row and add to session
+            repository_row = Repository(name=event['repository']['name'], description=event['repository']['description'],
+                                        owner_type=event['repository']['owner']['type'], owner_id=event['repository']['owner']['id'],
+                                        organization=organization_row, node_id=event['repository']['node_id'],
+                                        id=event['repository']['id'])
+            self.session.add(repository_row)
+
+            # create web hook for this repository
+            create_webhook(repo)
+
+            self.session.commit()
+
+        elif action == 'renamed':
+            repo_node = event['repository']['node_id']
+            repo = self.session.query(Repository).filter_by(node_id=repo_node).first()
+            repo.name = event['repository']['name']
+            self.session.commit()
+
+        elif action == 'edited':
+            repo_id = event['repository']['id']
+            repo = self.session.query(Repository).get(repo_id)
+            # change and commit all attributes
+            repo.description = event['repository']['description']
+            repo.owner_id = event['repository']['owner']['id']
+            repo.owner_type = event['repository']['owner']['type']
+            self.session.commit()
+
+        elif action == 'deleted':
+            repo_node = event['repository']['node_id']
+            self.session.query(Repository).filter_by(node_id=repo_node).delete()
+            self.session.commit()
+
+    def handle_issues(self, event, action):
+        # issues: opened, edited, deleted, transferred, closed, reopened, assigned, unassigned, labeled, unlabeled
+
+        if action == 'opened':
+            repo_node = event['repository']['node_id']
+            repo_row = self.session.query(Repository).filter_by(node_id=repo_node).first()
+            # create Issue row and add to session
+            issue_row = Issue(number=event['issue']['number'], title=event['issue']['title'],
+                              body=event['issue']['body'], state=event['issue']['state'],
+                              closed_at=event['issue']['closed_at'], closed_by=None,
+                              repository=repo_row, node_id=event['issue']['node_id'],
+                              id=event['issue']['id'])
+            self.session.add(issue_row)
+            self.session.commit()
+
+        elif action == 'edited':
+            issue_id = event['issue']['id']
+            issue = self.session.query(Issue).get(issue_id)
+            # change and commit all attributes
+            issue.title = event['issue']['title']
+            self.session.commit()
+
+        elif action == 'deleted' or action == 'transferred':
+            # FIXME: remove deleted/transferred issue from all other table references
+            issue_node = event['issue']['node_id']
+            issue = self.session.query(Issue).filter_by(node_id=issue_node).delete()
+            self.session.commit()
+
+        elif action == 'closed':
+            issue_id = event['issue']['id']
+            issue = self.session.query(Issue).get(issue_id)
+            # change and commit all attributes
+            issue.state = event['issue']['state']
+            issue.closed_at = event['issue']['closed_at']
+            issue.closed_by = self.add_get_user(event['issue']['user'])
+            self.session.commit()
+
+        elif action == 'reopened':
+            issue_id = event['issue']['id']
+            issue = self.session.query(Issue).get(issue_id)
+            # change and commit all attributes
+            issue.state = event['issue']['state']
+            self.session.commit()
+
+        elif action == 'assigned':
+            issue_node = event['issue']['node_id']
+            issue = self.session.query(Issue).filter_by(node_id=issue_node).first()
+            # change and commit all attributes
+            for assignee in event['issue']['assignees']:
+                issue.assignees.append(self.add_get_user(assignee))
+            self.session.commit()
+
+        elif action == 'unassigned':
+            issue_node = event['issue']['node_id']
+            issue = self.session.query(Issue).filter_by(node_id=issue_node).first()
+            # change and commit all attributes
+            issue.assignees.remove(self.add_get_user(event['assignee']))
+            self.session.commit()
+
+        elif action == 'labeled':
+            issue_node = event['issue']['node_id']
+            issue = self.session.query(Issue).filter_by(node_id=issue_node).first()
+            # change and commit all attributes
+            for label in event['issue']['labels']:
+                issue.labels.append(self.add_get_label(label))
+                self.session.commit()
+
+        elif action == 'unlabeled':
+            issue_node = event['issue']['node_id']
+            issue = self.session.query(Issue).filter_by(node_id=issue_node).first()
+            # change and commit all attributes
+            issue.labels.remove(self.add_get_label(event['label']))
+            self.session.commit()
+
+    def handle_issue_comment(self, event, action):
+        # issue_comment: created, edited, deleted
+
+        if action == 'created':
+            issue_node = event['issue']['node_id']
+            user_node = event['comment']['user']['node_id']
+            issue_row = self.session.query(Issue).filter_by(node_id=issue_node).first()
+            user_row = self.session.query(User).filter_by(node_id=user_node).first()
+
+            # create Issue row and add to session
+            issue_comment_row = IssueComment(issue=issue_row, user=user_row,
+                                             body=event['comment']['body'],
+                                             node_id=event['comment']['node_id'],
+                                             id=event['comment']['id'])
+            self.session.add(issue_comment_row)
+            self.session.commit()
+
+        elif action == 'edited':
+            issue_comment_id = event['comment']['id']
+            issue_comment = self.session.query(IssueComment).get(issue_comment_id)
+            # change and commit all attributes
+            issue_comment.body = event['comment']['body']
+            self.session.commit()
+
+        elif action == 'deleted':
+            issue_comment_node = event['comment']['node_id']
+            issue_comment = self.session.query(IssueComment).filter_by(
+                node_id=issue_comment_node).delete()
+            self.session.commit()
+
+    def handle_label(self, event, action):
+        # label: created, edited, deleted
+
+        if action == 'created':
+            # create Issue row and add to session
+            label_row = Label(name=event['label']['name'], description=None,
+                              color=event['label']['color'],
+                              node_id=event['label']['node_id'], id=event['label']['id'])
+            self.session.add(label_row)
+            self.session.commit()
+
+        elif action == 'edited':
+            label_id = event['label']['id']
+            label = self.session.query(Label).get(label_id)
+            # change and commit all attributes
+            label.name = event['label']['name']
+            label.color = event['label']['color']
+            self.session.commit()
+
+        elif action == 'deleted':
+            label_node = event['label']['node_id']
+            # FIXME: before a label get deleted, must remove label from each issue it belongs to
+            label = self.session.query(Label).filter_by(node_id=label_node).delete()
+            self.session.commit()
 
 
 class SyncCommand:
     PORT = 8888
+
+    # important events and actions
+    EVENT_FILTER_CONFIG = {
+        "issue_comment": ["created", "edited", "deleted"],
+        "issues": ["opened", "edited", "deleted", "transferred", "closed", "reopened", "assigned", "unassigned", "labeled", "unlabeled"],
+        "label": ["created", "edited", "deleted"],
+        # "organization": ["deleted", "renamed"], # FIXME: put back when there is Org level webhook
+        "repository": ["created", "renamed", "edited", "deleted"]
+    }
 
     def __init__(self, gitkanban):
         self.gitkanban = gitkanban
@@ -76,10 +315,11 @@ class SyncCommand:
     def create_webhook(self, repo):
         # creates a webhook for the specified repository
 
-        events = list(TRIGGERS.keys())
+        events = list(self.EVENT_FILTER_CONFIG.keys())
 
+        # FIXME: --webhook-url parameter should have this info
         config = {
-            "url": "http://{host}/{endpoint}".format(host=HOST, endpoint=ENDPOINT),
+            "url": "https://{host}.{endpoint}/listen".format(host=HOST, endpoint=ENDPOINT),
             "content_type": "json"
         }
 
@@ -97,7 +337,8 @@ class SyncCommand:
             # create Repository row and add to session
             repository_row = Repository(name=repo.name, description=repo.description,
                                         owner_type=repo.owner.type, owner_id=repo.owner.id,
-                                        organization=organization_row, node_id=repo.raw_data['node_id'])
+                                        organization=organization_row, node_id=repo.raw_data['node_id'],
+                                        id=repo.raw_data['id'])
             self.session.add(repository_row)
 
             # create web hook for this repository
@@ -132,7 +373,8 @@ class SyncCommand:
             issue_row = Issue(number=issue.number, title=issue.title,
                               body=issue.body, state=issue.state,
                               closed_at=issue.closed_at, closed_by=closed_by,
-                              repository=repo_row, node_id=issue.raw_data['node_id'])
+                              repository=repo_row, node_id=issue.raw_data['node_id'],
+                              id=issue.raw_data['id'])
             self.session.add(issue_row)
 
             # populate all Label rows from issue
@@ -161,13 +403,14 @@ class SyncCommand:
 
             # create IssueComment row and add to session
             issue_comment_row = IssueComment(issue=issue_row, user=user_row,
-                                             body=comment.body, node_id=comment.raw_data['node_id'])
+                                             body=comment.body, node_id=comment.raw_data['node_id'],
+                                             id=comment.raw_data['id'])
             self.session.add(issue_comment_row)
 
         # commit any changes in transaction buffer
         self.session.commit()
 
-    # TODO: possibly choose better attributes for query filter_by lookups?
+    # TODO: query by id instead of node_id?
 
     # add Label row to session by creating from repo
     def populate_labels(self, labels):
@@ -190,7 +433,8 @@ class SyncCommand:
                     node_id=label.raw_data['node_id']).first()
             else:  # create and add
                 label_row = Label(name=label.name, description=label.description,
-                                  color=label.color, node_id=label.raw_data['node_id'])
+                                  color=label.color, node_id=label.raw_data['node_id'],
+                                  id=label.raw_data['id'])
                 self.session.add(label_row)
 
         # commit any changes in transaction buffer
@@ -216,7 +460,8 @@ class SyncCommand:
         else:  # create and add
             org_row = Organization(login=org.login, name=org.name,
                                    description=org.description, email=org.email,
-                                   node_id=org.raw_data['node_id'])
+                                   node_id=org.raw_data['node_id'],
+                                   id=org.raw_data['id'])
             self.session.add(org_row)
 
         # commit any changes in transaction buffer
@@ -244,7 +489,7 @@ class SyncCommand:
             user_row = User(name=user.name, login=user.login,
                             company=user.company, location=user.location,
                             email=user.email, avatar_url=user.avatar_url,
-                            node_id=user.raw_data['node_id'])
+                            node_id=user.raw_data['node_id'], id=user.raw_data['id'])
             self.session.add(user_row)
 
         # commit any changes in transaction buffer
@@ -271,7 +516,8 @@ class SyncCommand:
                 node_id=label.raw_data['node_id']).first()
         else:  # create and add
             label_row = Label(name=label.name, description=label.description,
-                              color=label.color, node_id=label.raw_data['node_id'])
+                              color=label.color, node_id=label.raw_data['node_id'],
+                              id=label.raw_data['id'])
             self.session.add(label_row)
 
         # commit any changes in transaction buffer
@@ -351,8 +597,21 @@ class SyncCommand:
         self.args = self.gitkanban.args
         self.log = self.gitkanban.log
 
+        # Connect to db
+        engine = create_engine(self.args.db)
+
+        # create session
+        Session = sessionmaker()
+        Session.configure(bind=engine)
+        session = Session()
+
         app = tornado.web.Application([
-            (r'/listen', ListenHandler, dict(log=self.log)),
+            (r'/listen', ListenHandler, dict(
+                log=self.log,
+                session=session,
+                engine=engine,
+                event_filter_config=self.EVENT_FILTER_CONFIG,
+            )),
         ])
 
         app.listen(self.args.port)
