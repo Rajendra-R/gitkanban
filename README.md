@@ -1,15 +1,9 @@
 # gitkanban tool
 A tool to enhance Github issue management with Kanban flow
 
-## Clone Git Repository
-```
-git clone https://github.com/deep-compute/gitkanban.git
-cd gitkanaban
-```
-
 ## Install gitkanban
 ```
-pip install .
+pip install gitkanban
 ```
 
 ## Usage
@@ -25,9 +19,12 @@ You would get something like this:
 usage: gitkanban [-h] [--name NAME] [--log-level LOG_LEVEL]
                  [--log-format {json,pretty}] [--log-file LOG_FILE] [--quiet]
                  [--metric-grouping-interval METRIC_GROUPING_INTERVAL]
-                 [--debug] [-auth GITHUB_ACCESS_TOKEN] [-u USERNAME]
-                 [-p PASSWORD]
-                 {ensure-labels,check-constraints,run} ...
+                 [--debug] [-a GITHUB_ACCESS_TOKEN] [-u USERNAME]
+                 [-p PASSWORD] --config-file CONFIG_FILE
+                 {ensure-labels,check-constraints,ensure-repo-group-labels,snooze,sync,run}
+                 ...
+
+A tool to enhance Github issue management with Kanban flow
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -44,35 +41,45 @@ optional arguments:
                         To group metrics based on time interval ex:10 i.e;(10
                         sec)
   --debug               To run the code in debug mode
-  -auth GITHUB_ACCESS_TOKEN, --github-access-token GITHUB_ACCESS_TOKEN
+  -a GITHUB_ACCESS_TOKEN, --github-access-token GITHUB_ACCESS_TOKEN
                         github account access token to authenticate
   -u USERNAME, --username USERNAME
                         github username
   -p PASSWORD, --password PASSWORD
                         github password
+  --config-file CONFIG_FILE
+                        check the config file ex: conf.json or config.conf
 
 commands:
-  {ensure-labels,check-constraints,run}
+  {ensure-labels,check-constraints,ensure-repo-group-labels,snooze,sync,run}
     ensure-labels       create or modify the labels
     check-constraints   check the label constraints
+    ensure-repo-group-labels
+                        create the repo_group labels to the repo in that group
+    snooze              remind the issues after time duration
+    sync                Sync full state from Github
 ```
 
 ## 1. ensure-labels
 It will create the labels and update the existing labels.
 ```
-gitkanban ensure-labels -h
-
-usage: gitkanban ensure-labels [-h] [--org ORG] [--repo REPO] --config-file
-                               CONFIG_FILE
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --org ORG             github organization name
-  --repo REPO           github repository name
-  --config-file CONFIG_FILE
-                        github label configuration file
+gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> ensure-labels
 ```
-run command
+
+## 2. check-constraints
+It will execute the constraints on Github issues and raise alerts for the issues.
 ```
-gitkanban -auth <github access token> ensure-labels  --org <organization-name> --repo <repository-name> --config-file <config file name>
+gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> check-constraints -a <aler_repo> --db <dbname.db>
+```
+
+## 3. ensure-repo-group-labels
+It will create the repo-group labels and update the existing labels.
+```
+gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> ensure-repo-group-labels
+```
+
+## 4. snooze (reminder)
+Move issues to in-progress from other queues when snooze time expires.
+```
+gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> snooze
 ```
