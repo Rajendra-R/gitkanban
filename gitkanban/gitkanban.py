@@ -1096,7 +1096,10 @@ class GitKanban(BaseScript):
                 req_url = ISSUE_URL.format(repo_name)
             else:
                 if repo.get('label', ''):
-                    label_names = "{},{}".format(actual_q_name, repo['label'])
+                    if actual_q_name:
+                        label_names = "{},{}".format(actual_q_name, repo['label'])
+                    else:
+                        label_names = repo['label']
                     params = {"labels": label_names}
                 else:
                     if not actual_q_name:
