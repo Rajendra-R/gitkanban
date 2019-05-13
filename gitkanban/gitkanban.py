@@ -1000,9 +1000,11 @@ class GitKanban(BaseScript):
         # get person timezone current time
         p_current_time = datetime.datetime.now(timezone(p_timezone))
         p_week_day = calendar.day_name[p_current_time.date().weekday()].lower()
-        people['work_hours'] = people['work_days'][p_week_day]
-
-        return people
+        try:
+            people['work_hours'] = people['work_days'][p_week_day]
+            return people
+        except KeyError:
+            return
 
     def generate_needs_update_constraints(self):
         nup_list = []
@@ -1237,6 +1239,8 @@ class GitKanban(BaseScript):
                             continue
 
                         people = self.get_people_info(peoples, p)
+                        if not people:
+                            continue
 
                         alert_msg = {
                             "priority": co['priority'],
@@ -1352,6 +1356,8 @@ class GitKanban(BaseScript):
                                             continue
                                         for ap in pe_list:
                                             _people = self.get_people_info(peoples, ap)
+                                            if not _people:
+                                                continue
                                             p_location = _people['location']
                                             p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
                                             p_current_time_utc = datetime.datetime.now(timezone(p_timezone)).astimezone(timezone('UTC')).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -1600,6 +1606,8 @@ class GitKanban(BaseScript):
                                     continue
 
                                 people = self.get_people_info(peoples, label_person)
+                                if not people:
+                                    continue
 
                                 p_location = people['location']
                                 p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
