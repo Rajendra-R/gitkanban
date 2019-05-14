@@ -26,8 +26,7 @@ class ListenHandler(tornado.web.RequestHandler):
         self.event_filter_config = event_filter_config
 
     def post(self):
-        # listens for post requests from Github webhooks, calls corresponding
-        #   handler functions
+        # gets webhook event/action and calls corresponding handler function
 
         # FIXME: Add code to verify that the source of the event is indeed
         # Github, eg. x-hub-signature header
@@ -54,39 +53,57 @@ class ListenHandler(tornado.web.RequestHandler):
             self.log.exception('event_handling_failed', _event=event_name, action=action)
 
     def add_get_user(self, user):
-        # return User if exists, else create and return
+        """
+        check if user from POST exists in database
+        :param user: dict of user attributes
+        :return user_row: new or existing User row
+        """
+
+        # get all required user attributes from user url
         r = requests.get(user['url'])
         user = r.json()
 
+        # return existing User
         if self.session.query(User).filter_by(node_id=user['node_id']).first():
             return self.session.query(User).filter_by(node_id=user['node_id']).first()
-        else:
+        else:  # create/add new User and return
             user_row = User(name=user['name'], login=user['login'],
                             company=user['company'], location=user['location'],
                             email=user['email'], avatar_url=user['avatar_url'],
                             node_id=user['node_id'], id=user['id'])
             self.session.add(user_row)
             self.session.commit()
+
             return user_row
 
     def add_get_label(self, label):
-        # return Label if exists, else create and return
+        """
+        check if label from POST exists in database
+        :param label: dict of user attributes
+        :return label_row: new or existing Label row
+        """
 
+        # return existing Label
         if self.session.query(Label).filter_by(node_id=label['node_id']).first():
             return self.session.query(Label).filter_by(node_id=label['node_id']).first()
-        else:
+        else:  # create/add new Label and return
             label_row = Label(name=label['name'], description=None,
                               color=label['color'], node_id=label['node_id'],
                               id=label['id'])
 
             self.session.add(label_row)
             self.session.commit()
+
             return label_row
 
     def handle_organization(self, event, action):
-        # organization: deleted, renamed
+        """
+        update Organization table (deleted, renamed)
+        :param event: dict of events
+        :param action: String
+        """
 
-        # for query by node_id
+        # for Organization query by node_id
         org_node = event['organization']['node_id']
 
         if action == 'deleted':
@@ -102,7 +119,11 @@ class ListenHandler(tornado.web.RequestHandler):
             self.log.error('unknown_organization_action', _event=event, _action=action)
 
     def handle_repository(self, event, action):
-        # repository: created, renamed, edited, deleted
+        """
+        update Repository table (created, renamed, edited, deleted)
+        :param event: dict of events
+        :param action: String
+        """
 
         if action == 'created':
             # get repo's Organization
@@ -146,7 +167,12 @@ class ListenHandler(tornado.web.RequestHandler):
             self.log.error('unknown_repository_action', _event=event, _action=action)
 
     def handle_issues(self, event, action):
-        # issues: opened, edited, deleted, transferred, closed, reopened, assigned, unassigned, labeled, unlabeled
+        """
+        update Issues table (opened, edited, deleted, transferred, closed,
+            reopened, assigned, unassigned, labeled, unlabeled)
+        :param event: dict of events
+        :param action: String
+        """
 
         if action == 'opened':
             repo_node = event['repository']['node_id']
@@ -223,7 +249,11 @@ class ListenHandler(tornado.web.RequestHandler):
             self.log.error('unknown_issue_action', _event=event, _action=action)
 
     def handle_issue_comment(self, event, action):
-        # issue_comment: created, edited, deleted
+        """
+        update IssueComment table (created, edited, deleted)
+        :param event: dict of events
+        :param action: String
+        """
 
         if action == 'created':
             issue_node = event['issue']['node_id']
@@ -256,7 +286,11 @@ class ListenHandler(tornado.web.RequestHandler):
             self.log.error('unknown_issue_comment_action', _event=event, _action=action)
 
     def handle_label(self, event, action):
-        # label: created, edited, deleted
+        """
+        update Label table (created, edited, deleted)
+        :param event: dict of events
+        :param action: String
+        """
 
         if action == 'created':
             # create Issue row and add to session

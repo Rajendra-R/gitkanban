@@ -1,19 +1,20 @@
-# gitkanban tool
+# Gitkanban
+
 A tool to enhance Github issue management with Kanban flow
 
-## Install gitkanban
+## Installation
 ```
 pip install gitkanban
 ```
 
 ## Usage
 
-Please verify whether the tool is installed properly or not
+Verify whether the tool is installed properly:
 
 ```
 gitkanban --help
 ```
-You would get something like this:
+You should get something like this:
 
 ```
 usage: gitkanban [-h] [--name NAME] [--log-level LOG_LEVEL]
@@ -41,7 +42,7 @@ optional arguments:
                         To group metrics based on time interval ex:10 i.e;(10
                         sec)
   --debug               To run the code in debug mode
-  -a GITHUB_ACCESS_TOKEN, --github-access-token GITHUB_ACCESS_TOKEN
+  --github-access-token, -a GITHUB_ACCESS_TOKEN GITHUB_ACCESS_TOKEN
                         github account access token to authenticate
   -u USERNAME, --username USERNAME
                         github username
@@ -60,26 +61,44 @@ commands:
     sync                Sync full state from Github
 ```
 
-## 1. ensure-labels
+## Commands
+
+### ensure-labels
 It will create the labels and update the existing labels.
 ```
 gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> ensure-labels
 ```
 
-## 2. check-constraints
+### check-constraints
 It will execute the constraints on Github issues and raise alerts for the issues.
 ```
 gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> check-constraints -a <aler_repo> --db <dbname.db>
 ```
 
-## 3. ensure-repo-group-labels
+### ensure-repo-group-labels
 It will add the team label to the repo-group team repository issues.
 ```
 gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> ensure-repo-group-labels
 ```
 
-## 4. snooze (reminder)
+### snooze (reminder)
 Move issues to in-progress from other queues when snooze time expires.
 ```
 gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> snooze
+```
+
+### sync
+Sync up info from Github relevant to the configured repositories, their issues, comments, etc.
+
+#### full
+Location where Github can send POST request changes in Repositories' attributes
+```
+gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> sync --db sqlite:////tmp/test.db full --webhook-loc https://example.com/
+```
+
+#### listen
+Real time incremental sync from Github via Webhooks
+
+```
+gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> sync --db sqlite:////tmp/test.db listen --port <port>
 ```
