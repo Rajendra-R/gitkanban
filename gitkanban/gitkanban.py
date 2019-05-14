@@ -752,6 +752,16 @@ class GitKanban(BaseScript):
         # calculate total working hours per day
         pwh_start_h, pwh_start_m = people['work_hours']['start'].split(':')
         pwh_end_h, pwh_end_m = people['work_hours']['end'].split(':')
+        # convert start/end time
+        p_location = people['location']
+        p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
+        p_start_time_utc = datetime.datetime.now(timezone(p_timezone)).replace(hour=int(pwh_start_h), minute=int(pwh_start_m)).astimezone(timezone('UTC'))
+        pwh_start_h = p_start_time_utc.hour
+        pwh_start_m = p_start_time_utc.minute
+        p_end_time_utc = datetime.datetime.now(timezone(p_timezone)).replace(hour=int(pwh_end_h), minute=int(pwh_end_m)).astimezone(timezone('UTC'))
+        pwh_end_h = p_end_time_utc.hour
+        pwh_end_m = p_end_time_utc.minute
+
         diff = relativedelta(datetime.datetime.now().replace(hour=int(pwh_end_h), minute=int(pwh_end_m)), datetime.datetime.now().replace(hour=int(pwh_start_h), minute=int(pwh_start_m)))
         total_pwh = diff.hours
         if diff.minutes == 59:
