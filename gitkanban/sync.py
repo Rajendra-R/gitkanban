@@ -26,8 +26,11 @@ class ListenHandler(tornado.web.RequestHandler):
         self.event_filter_config = event_filter_config
 
     def post(self):
+        # listens for post requests from Github webhooks, calls corresponding
+        #   handler functions
+
         # FIXME: Add code to verify that the source of the event is indeed
-        # Github
+        # Github, eg. x-hub-signature header
 
         # handle the event/action by passing to corresponding functions
         event = json.loads(self.request.body.decode('utf8'))
@@ -90,10 +93,13 @@ class ListenHandler(tornado.web.RequestHandler):
             self.session.query(Organization).filter_by(node_id=org_node).delete()
             self.session.commit()
 
-        if action == 'renamed':
+        elif action == 'renamed':
             org = self.session.query(Organization).filter_by(node_id=org_node).first()
             org.name = event['organization']['name']
             self.session.commit()
+
+        else:
+            self.log.error('unknown_organization_action', _event=event, _action=action)
 
     def handle_repository(self, event, action):
         # repository: created, renamed, edited, deleted
@@ -135,6 +141,9 @@ class ListenHandler(tornado.web.RequestHandler):
             repo_node = event['repository']['node_id']
             self.session.query(Repository).filter_by(node_id=repo_node).delete()
             self.session.commit()
+
+        else:
+            self.log.error('unknown_repository_action', _event=event, _action=action)
 
     def handle_issues(self, event, action):
         # issues: opened, edited, deleted, transferred, closed, reopened, assigned, unassigned, labeled, unlabeled
@@ -210,6 +219,9 @@ class ListenHandler(tornado.web.RequestHandler):
             issue.labels.remove(self.add_get_label(event['label']))
             self.session.commit()
 
+        else:
+            self.log.error('unknown_issue_action', _event=event, _action=action)
+
     def handle_issue_comment(self, event, action):
         # issue_comment: created, edited, deleted
 
@@ -240,6 +252,9 @@ class ListenHandler(tornado.web.RequestHandler):
                 node_id=issue_comment_node).delete()
             self.session.commit()
 
+        else:
+            self.log.error('unknown_issue_comment_action', _event=event, _action=action)
+
     def handle_label(self, event, action):
         # label: created, edited, deleted
 
@@ -264,6 +279,9 @@ class ListenHandler(tornado.web.RequestHandler):
             # FIXME: before a label get deleted, must remove label from each issue it belongs to
             label = self.session.query(Label).filter_by(node_id=label_node).delete()
             self.session.commit()
+
+        else:
+            self.log.error('unknown_label_action', _event=event, _action=action)
 
 
 class SyncCommand:
@@ -299,16 +317,16 @@ class SyncCommand:
         subcommands = cmd.add_subparsers()
 
         full_cmd = subcommands.add_parser('full',
-                help='One-time full sync from Github via v3 API')
+                                          help='One-time full sync from Github via v3 API')
         full_cmd.add_argument('--webhook-loc', type=str, default=None,
-                help='''Location where this service is accessible for
+                              help='''Location where this service is accessible for
                  Github to send Webhook events. eg: https://example.com/. Note
                  that a /listen will be appended to this URL before registration
                  with Github''')
         full_cmd.set_defaults(func=self.cmd_full_sync)
 
         listen_cmd = subcommands.add_parser('listen',
-                help='Real-time incremental sync from Github via Webhooks')
+                                            help='Real-time incremental sync from Github via Webhooks')
         listen_cmd.add_argument('--port', type=int, default=self.PORT)
         listen_cmd.set_defaults(func=self.cmd_listen)
 
