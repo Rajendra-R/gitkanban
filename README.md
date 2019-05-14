@@ -6,14 +6,15 @@ A tool to enhance Github issue management with Kanban flow
 pip install gitkanban
 ```
 
+
 ## Usage
 
-Please verify whether the tool is installed properly or not
+Verify whether the tool is installed properly:
 
 ```
 gitkanban --help
 ```
-You would get something like this:
+You should get something like this:
 
 ```
 usage: gitkanban [-h] [--name NAME] [--log-level LOG_LEVEL]
@@ -41,7 +42,7 @@ optional arguments:
                         To group metrics based on time interval ex:10 i.e;(10
                         sec)
   --debug               To run the code in debug mode
-  -a GITHUB_ACCESS_TOKEN, --github-access-token GITHUB_ACCESS_TOKEN
+  --github-access-token, -a GITHUB_ACCESS_TOKEN GITHUB_ACCESS_TOKEN
                         github account access token to authenticate
   -u USERNAME, --username USERNAME
                         github username
@@ -60,6 +61,7 @@ commands:
     sync                Sync full state from Github
 ```
 
+# Commands
 ## 1. ensure-labels
 It will create the labels and update the existing labels.
 ```
@@ -82,4 +84,24 @@ gitkanban --log-file <filename.log> -a <github access token> --config-file <conf
 Move issues to in-progress from other queues when snooze time expires.
 ```
 gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> snooze
+```
+
+## gitkanban subcommands
+### 1. sync
+Get all Repositories' attributes from Github and save to database.
+```
+sync --db <sqlite:////tmp/test.db>
+```
+
+### sync subcommands
+#### 1. full
+Location where Github can send POST request changes in Repositories' attributes
+```
+full --webhook-loc <https://example.com/>
+```
+
+#### 2. listen
+Real time incremental sync from Github via Webhooks
+```
+listen --port <8888>
 ```
