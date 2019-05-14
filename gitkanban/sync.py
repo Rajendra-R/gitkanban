@@ -1,4 +1,5 @@
 import json
+import urllib.parse
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -15,12 +16,6 @@ from .models import Organization, Repository, issue_user_assignee_rel_table, \
 
 
 DUMMY_LOG = Dummy()
-
-
-# FIXME: remove after adding command line param to sync command
-# host and endpoint for create_webhook
-HOST = "dfedbba0"
-ENDPOINT = "ngrok.io"
 
 
 class ListenHandler(tornado.web.RequestHandler):
@@ -304,11 +299,16 @@ class SyncCommand:
         subcommands = cmd.add_subparsers()
 
         full_cmd = subcommands.add_parser('full',
-                                          help='One-time full sync from Github via v3 API')
+                help='One-time full sync from Github via v3 API')
+        full_cmd.add_argument('--webhook-loc', type=str, required=True,
+                help='''Location where this service is accessible for
+                 Github to send Webhook events. eg: https://example.com/. Note
+                 that a /listen will be appended to this URL before registration
+                 with Github''')
         full_cmd.set_defaults(func=self.cmd_full_sync)
 
         listen_cmd = subcommands.add_parser('listen',
-                                            help='Real-time incremental sync from Github via Webhooks')
+                help='Real-time incremental sync from Github via Webhooks')
         listen_cmd.add_argument('--port', type=int, default=self.PORT)
         listen_cmd.set_defaults(func=self.cmd_listen)
 
@@ -317,9 +317,9 @@ class SyncCommand:
 
         events = list(self.EVENT_FILTER_CONFIG.keys())
 
-        # FIXME: --webhook-url parameter should have this info
+        webhook_loc = urllib.parse.urljoin(self.args.webhook_loc, 'listen')
         config = {
-            "url": "https://{host}.{endpoint}/listen".format(host=HOST, endpoint=ENDPOINT),
+            "url": webhook_loc,
             "content_type": "json"
         }
 

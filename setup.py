@@ -15,6 +15,7 @@ setup(
         "numpy==1.16.2",
         "SQLAlchemy==1.3.3",
         "SQLAlchemy-Utils==0.33.11",
+        "deeputil>=0.2.5",
     ],
     author="deep-compute",
     author_email="contact@deepcompute.com",
