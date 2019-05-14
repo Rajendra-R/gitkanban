@@ -1,11 +1,11 @@
-# gitkanban tool
+# Gitkanban
+
 A tool to enhance Github issue management with Kanban flow
 
-## Install gitkanban
+## Installation
 ```
 pip install gitkanban
 ```
-
 
 ## Usage
 
@@ -61,47 +61,44 @@ commands:
     sync                Sync full state from Github
 ```
 
-# Commands
-## 1. ensure-labels
+## Commands
+
+### ensure-labels
 It will create the labels and update the existing labels.
 ```
 gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> ensure-labels
 ```
 
-## 2. check-constraints
+### check-constraints
 It will execute the constraints on Github issues and raise alerts for the issues.
 ```
 gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> check-constraints -a <aler_repo> --db <dbname.db>
 ```
 
-## 3. ensure-repo-group-labels
+### ensure-repo-group-labels
 It will add the team label to the repo-group team repository issues.
 ```
 gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> ensure-repo-group-labels
 ```
 
-## 4. snooze (reminder)
+### snooze (reminder)
 Move issues to in-progress from other queues when snooze time expires.
 ```
 gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> snooze
 ```
 
-## gitkanban subcommands
-### 1. sync
-Get all Repositories' attributes from Github and save to database.
-```
-sync --db <sqlite:////tmp/test.db>
-```
+### sync
+Sync up info from Github relevant to the configured repositories, their issues, comments, etc.
 
-### sync subcommands
-#### 1. full
+#### full
 Location where Github can send POST request changes in Repositories' attributes
 ```
-full --webhook-loc <https://example.com/>
+gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> sync --db sqlite:////tmp/test.db full --webhook-loc https://example.com/
 ```
 
-#### 2. listen
+#### listen
 Real time incremental sync from Github via Webhooks
+
 ```
-listen --port <8888>
+gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> sync --db sqlite:////tmp/test.db listen --port <port>
 ```
