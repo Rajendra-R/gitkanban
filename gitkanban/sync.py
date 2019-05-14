@@ -300,7 +300,7 @@ class SyncCommand:
 
         full_cmd = subcommands.add_parser('full',
                 help='One-time full sync from Github via v3 API')
-        full_cmd.add_argument('--webhook-loc', type=str, required=True,
+        full_cmd.add_argument('--webhook-loc', type=str, default=None,
                 help='''Location where this service is accessible for
                  Github to send Webhook events. eg: https://example.com/. Note
                  that a /listen will be appended to this URL before registration
@@ -314,6 +314,9 @@ class SyncCommand:
 
     def create_webhook(self, repo):
         # creates a webhook for the specified repository
+
+        if not self.args.webhook_loc:
+            return
 
         events = list(self.EVENT_FILTER_CONFIG.keys())
 
