@@ -73,7 +73,7 @@ gitkanban --log-file <filename.log> -a <github access token> --config-file <conf
 ```
 
 ## 3. ensure-repo-group-labels
-It will create the repo-group labels and update the existing labels.
+It will add the team label to the repo-group team repository issues.
 ```
 gitkanban --log-file <filename.log> -a <github access token> --config-file <config file name> ensure-repo-group-labels
 ```
