@@ -758,7 +758,9 @@ class GitKanban(BaseScript):
             issue_created_at = parser.parse(issue_created_at).replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
             return issue_created_at
 
-    def get_working_hours_in_off_days(self, date_obj, person_off_info, total_pwh, pwh_start_h, pwh_start_m, pwh_end_h, pwh_end_m, m_date=False):
+    def get_working_hours_in_off_days(self, date_obj, person_off_info, total_pwh,
+                                        pwh_start_h, pwh_start_m, pwh_end_h, pwh_end_m,
+                                        m_date=False):
         date_hour = date_obj.time().hour
         # calculate first/second half working hours
         work_half_hour = round(total_pwh/2)
@@ -845,7 +847,8 @@ class GitKanban(BaseScript):
                 total_hours = 0
             elif first_date in person_off_days.keys():
                 person_off_day_info = person_off_days[first_date]
-                total_hours = self.get_working_hours_in_off_days(first_date_obj, person_off_day_info, total_pwh, pwh_start_h, pwh_start_m, pwh_end_h, pwh_end_m)
+                total_hours = self.get_working_hours_in_off_days(first_date_obj, person_off_day_info,
+                                total_pwh, pwh_start_h, pwh_start_m, pwh_end_h, pwh_end_m)
             else:
                 diff = relativedelta(first_date_obj.replace(hour=int(pwh_end_h), minute=int(pwh_end_m)), first_date_obj)
                 hours = diff.hours
@@ -861,7 +864,8 @@ class GitKanban(BaseScript):
                 total_hours += 0
             if last_date in person_off_days.keys():
                 person_off_day_info = person_off_days[last_date]
-                total_hours += self.get_working_hours_in_off_days(last_date_obj, person_off_day_info, total_pwh, pwh_start_h, pwh_start_m, pwh_end_h, pwh_end_m)
+                total_hours += self.get_working_hours_in_off_days(last_date_obj, person_off_day_info,
+                                total_pwh, pwh_start_h, pwh_start_m, pwh_end_h, pwh_end_m)
             if people['type'] == 'fresher':
                 if not calendar.day_name[last_date_obj.date().weekday()] == "Sunday":
                     diff = relativedelta(last_date_obj, last_date_obj.replace(hour=int(pwh_start_h), minute=int(pwh_start_m)))
@@ -891,7 +895,8 @@ class GitKanban(BaseScript):
                 total_hours += 0
             elif date in person_off_days.keys():
                 person_off_day_info = person_off_days[date]
-                total_hours += self.get_working_hours_in_off_days(date_obj, person_off_day_info, total_pwh, pwh_start_h, pwh_start_m, pwh_end_h, pwh_end_m, m_date=True)
+                total_hours += self.get_working_hours_in_off_days(date_obj, person_off_day_info,
+                                total_pwh, pwh_start_h, pwh_start_m, pwh_end_h, pwh_end_m, m_date=True)
             elif people['type'] == 'fresher':
                 if calendar.day_name[parser.parse(d).date().weekday()] == "Sunday":
                     continue
