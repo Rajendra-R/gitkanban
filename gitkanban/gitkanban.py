@@ -638,20 +638,31 @@ class GitKanban(BaseScript):
                 self.log.info('public_holiday_alert_cancled', holiday=h, p_name=p_name)
                 return False
 
+        # per day person working hours
+        diff = relativedelta(datetime.datetime.now().replace(hour=int(pwh_end_h), minute=int(pwh_end_m)), datetime.datetime.now().replace(hour=int(pwh_start_h), minute=int(pwh_start_m)))
+        total_pwh = diff.hours
+        if diff.minutes == 59:
+            total_pwh += 1
+
+        # calculate first/second half working hours
+        work_half_hour = round(total_pwh/2)
+        first_half_hour = (int(pwh_start_h) + work_half_hour)
+        second_half_hour = (first_half_hour + work_half_hour)
+
         # check the person is off/not
         p_offdays = people.get('offdays', [])
         for po in p_offdays:
             if p_current_date == po['date']:
+                p_c_h = p_current_time.time().hour
                 if po['duration'] == 'full':
                     self.log.info('person_is_off_alert_cancled', leave_info=po, p_name=p_name)
                     return False
-                p_c_h = p_current_time.time().hour
-                if po['duration'] == 'first-half':
-                    if p_c_h < 12:
+                elif po['duration'] == 'first-half':
+                    if p_c_h < first_half_hour:
                         self.log.info('person_is_off_first_half', leave_info=po, p_name=p_name)
                         return False
-                if po['duration'] == 'second-half':
-                    if p_c_h > 12 and p_c_h <= 24:
+                elif po['duration'] == 'second-half':
+                    if p_c_h > first_half_hour and p_c_h <= second_half_hour:
                         self.log.info('person_is_off_second_half', leave_info=po, p_name=p_name)
                         return False
 
@@ -659,9 +670,9 @@ class GitKanban(BaseScript):
         if people['type'] == 'fresher':
             if calendar.day_name[p_current_time.date().weekday()] == "Sunday":
                 return False
-        else:
-            if calendar.day_name[p_current_time.date().weekday()] in ["Saturday", "Sunday"]:
-                return False
+        elif calendar.day_name[p_current_time.date().weekday()] in ["Saturday", "Sunday"]:
+            return False
+
         p_current_time_utc = datetime.datetime.now(timezone(p_timezone)).astimezone(timezone('UTC')).time()
 
         # person UTC working time start
@@ -709,14 +720,13 @@ class GitKanban(BaseScript):
             if calendar.day_name[issue_created_at_obj.date().weekday()] == "Sunday":
                 issue_created_at_obj += datetime.timedelta(days=1)
                 issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
-        else:
-            if calendar.day_name[issue_created_at_obj.date().weekday()] == "Saturday":
-                issue_created_at_obj += datetime.timedelta(days=1)
-                issue_created_at_obj += datetime.timedelta(days=1)
-                issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
-            elif calendar.day_name[issue_created_at_obj.date().weekday()] == "Sunday":
-                issue_created_at_obj += datetime.timedelta(days=1)
-                issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
+        elif calendar.day_name[issue_created_at_obj.date().weekday()] == "Saturday":
+            issue_created_at_obj += datetime.timedelta(days=1)
+            issue_created_at_obj += datetime.timedelta(days=1)
+            issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
+        elif calendar.day_name[issue_created_at_obj.date().weekday()] == "Sunday":
+            issue_created_at_obj += datetime.timedelta(days=1)
+            issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
 
         # issue updated at UTC time
         isu_hour = parser.parse(issue_created_at).hour
@@ -735,12 +745,12 @@ class GitKanban(BaseScript):
                 if people['type'] == 'fresher':
                     if calendar.day_name[issue_created_at_obj.date().weekday()] == "Sunday":
                         issue_created_at_obj += datetime.timedelta(days=1)
-                else:
-                    if calendar.day_name[issue_created_at_obj.date().weekday()] == "Saturday":
-                        issue_created_at_obj += datetime.timedelta(days=1)
-                        issue_created_at_obj += datetime.timedelta(days=1)
-                    elif calendar.day_name[issue_created_at_obj.date().weekday()] == "Sunday":
-                        issue_created_at_obj += datetime.timedelta(days=1)
+                elif calendar.day_name[issue_created_at_obj.date().weekday()] == "Saturday":
+                    issue_created_at_obj += datetime.timedelta(days=1)
+                    issue_created_at_obj += datetime.timedelta(days=1)
+                elif calendar.day_name[issue_created_at_obj.date().weekday()] == "Sunday":
+                    issue_created_at_obj += datetime.timedelta(days=1)
+
                 issue_created_at = issue_created_at_obj.replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
                 return issue_created_at
         else:
@@ -748,11 +758,51 @@ class GitKanban(BaseScript):
             issue_created_at = parser.parse(issue_created_at).replace(hour=pwh_start_utc_hours, minute=pwh_start_utc_minute).strftime('%Y-%m-%dT%H:%M:%SZ')
             return issue_created_at
 
+    def get_working_hours_in_off_days(self, date_obj, person_off_info, total_pwh,
+                                        pwh_start_h, pwh_start_m, pwh_end_h, pwh_end_m,
+                                        m_date=False):
+        date_hour = date_obj.time().hour
+        # calculate first/second half working hours
+        work_half_hour = round(total_pwh/2)
+        first_half_hour = (pwh_start_h + work_half_hour)
+        second_half_hour = (first_half_hour + work_half_hour)
+        if person_off_info['duration'] == 'full':
+            return 0
+        elif person_off_info['duration'] == 'first-half':
+            if m_date:
+                return work_half_hour
+            elif date_hour < first_half_hour:
+                return 0
+            else:
+                diff = relativedelta(date_obj.replace(hour=int(pwh_end_h), minute=int(pwh_end_m)), date_obj)
+                hours = diff.hours
+                if diff.minutes == 59:
+                    hours += 1
+                return hours
+        elif person_off_info['duration'] == 'second-half':
+            if m_date:
+                return work_half_hour
+            elif date_hour > first_half_hour and date_hour <= second_half_hour:
+                return 0
+            else:
+                diff = relativedelta(date_obj, date_obj.replace(hour=int(pwh_start_h), minute=int(pwh_start_m)))
+                hours = diff.hours
+                if diff.minutes == 59:
+                    hours += 1
+                return hours
+
     def calculate_working_hours(self, issue_created_at, p_current_time_utc, people):
-        # calculate total working hours per day
+        # calculate consider working hours per day
         pwh_start_h, pwh_start_m = people['work_hours']['start'].split(':')
         pwh_end_h, pwh_end_m = people['work_hours']['end'].split(':')
-        # convert start/end time
+
+        # per day person working hours
+        diff = relativedelta(datetime.datetime.now().replace(hour=int(pwh_end_h), minute=int(pwh_end_m)), datetime.datetime.now().replace(hour=int(pwh_start_h), minute=int(pwh_start_m)))
+        total_pwh = diff.hours
+        if diff.minutes == 59:
+            total_pwh += 1
+
+        # convert person start/end time to UTC
         p_location = people['location']
         p_timezone = self.config_json.get('locations', {}).get(p_location, {}).get('timezone', '')
         p_start_time_utc = datetime.datetime.now(timezone(p_timezone)).replace(hour=int(pwh_start_h), minute=int(pwh_start_m)).astimezone(timezone('UTC'))
@@ -762,10 +812,13 @@ class GitKanban(BaseScript):
         pwh_end_h = p_end_time_utc.hour
         pwh_end_m = p_end_time_utc.minute
 
-        diff = relativedelta(datetime.datetime.now().replace(hour=int(pwh_end_h), minute=int(pwh_end_m)), datetime.datetime.now().replace(hour=int(pwh_start_h), minute=int(pwh_start_m)))
-        total_pwh = diff.hours
-        if diff.minutes == 59:
-            total_pwh += 1
+        # get person holidays list
+        person_off_days = {}
+        for po in people.get('offdays', []):
+            person_off_days[po['date']] = po
+
+        # get public holidays list
+        public_holidays = self.public_holidays_list.get(p_location, {})
 
         start = parser.parse(issue_created_at).date() # 2019-01-01T10:00:37Z
         end = parser.parse(p_current_time_utc).date() # 2019-01-05T15:00:37Z
@@ -773,6 +826,7 @@ class GitKanban(BaseScript):
         # [2014-01-01T10:00:37Z, 2014-01-02T00:00:00Z, 2014-01-03T00:00:00Z, 2014-01-04T00:00:00Z, 2014-01-05T15:00:37Z]
         total_dates = [(start + timedelta(n)).strftime('%Y-%m-%dT%H:%M:%SZ') for n in range(int ((end - start).days)+1)]
         total_hours = 0
+        # TODO: first if condition is not required
         if not total_dates:
             diff_time = relativedelta(parser.parse(p_current_time_utc), parser.parse(issue_created_at))
             months = diff_time.months
@@ -782,20 +836,36 @@ class GitKanban(BaseScript):
             #TODO: check year, months having 31, holidays, leapyear,..
             total_hours = int(((months * 30) * 24) + (days * 24) + hours)
             return total_hours
+
         if len(total_dates) >= 2:
             #TODO: avoid code duplication
             # first date
             total_dates[0] = issue_created_at
             first_date_obj = parser.parse(issue_created_at)
-            diff = relativedelta(first_date_obj.replace(hour=int(pwh_end_h), minute=int(pwh_end_m)), first_date_obj)
-            hours = diff.hours
-            if diff.minutes == 59:
-                hours += 1
-            total_hours = hours
+            first_date = first_date_obj.date().strftime('%d-%m-%Y')
+            if first_date in public_holidays.values():
+                total_hours = 0
+            elif first_date in person_off_days.keys():
+                person_off_day_info = person_off_days[first_date]
+                total_hours = self.get_working_hours_in_off_days(first_date_obj, person_off_day_info,
+                                total_pwh, pwh_start_h, pwh_start_m, pwh_end_h, pwh_end_m)
+            else:
+                diff = relativedelta(first_date_obj.replace(hour=int(pwh_end_h), minute=int(pwh_end_m)), first_date_obj)
+                hours = diff.hours
+                if diff.minutes == 59:
+                    hours += 1
+                total_hours = hours
 
             # last date
             total_dates[-1] = p_current_time_utc
             last_date_obj = parser.parse(p_current_time_utc)
+            last_date = last_date_obj.date().strftime('%d-%m-%Y')
+            if last_date in public_holidays.values():
+                total_hours += 0
+            if last_date in person_off_days.keys():
+                person_off_day_info = person_off_days[last_date]
+                total_hours += self.get_working_hours_in_off_days(last_date_obj, person_off_day_info,
+                                total_pwh, pwh_start_h, pwh_start_m, pwh_end_h, pwh_end_m)
             if people['type'] == 'fresher':
                 if not calendar.day_name[last_date_obj.date().weekday()] == "Sunday":
                     diff = relativedelta(last_date_obj, last_date_obj.replace(hour=int(pwh_start_h), minute=int(pwh_start_m)))
@@ -819,15 +889,23 @@ class GitKanban(BaseScript):
 
         # calculate for middle dates
         for d in total_dates[1:-1]:
-            if people['type'] == 'fresher':
+            date_obj = parser.parse(d)
+            date = date_obj.date().strftime('%d-%m-%Y')
+            if date in public_holidays.values():
+                total_hours += 0
+            elif date in person_off_days.keys():
+                person_off_day_info = person_off_days[date]
+                total_hours += self.get_working_hours_in_off_days(date_obj, person_off_day_info,
+                                total_pwh, pwh_start_h, pwh_start_m, pwh_end_h, pwh_end_m, m_date=True)
+            elif people['type'] == 'fresher':
                 if calendar.day_name[parser.parse(d).date().weekday()] == "Sunday":
                     continue
+            elif calendar.day_name[parser.parse(d).date().weekday()] in ["Saturday", "Sunday"]:
+                continue
             else:
-                if calendar.day_name[parser.parse(d).date().weekday()] in ["Saturday", "Sunday"]:
-                    continue
-            total_hours += total_pwh
+                total_hours += total_pwh
 
-        return total_hours
+        return (total_pwh, total_hours)
 
     def calculate_time_constraint(self, time_constraint, issue_created_at, p_current_time_utc, people=None):
         if 'eod' in time_constraint:
@@ -862,8 +940,14 @@ class GitKanban(BaseScript):
         elif 'w' in time_constraint:
             weeks, _ = time_constraint.split('w')
             c_days = int(weeks) * 7
-            diff_time = relativedelta(parser.parse(p_current_time_utc), parser.parse(issue_created_at))
-            return (diff_time.days >= c_days)
+            if people:
+                total_pwh, diff_hours = self.calculate_working_hours(issue_created_at, p_current_time_utc, people)
+                total_hours = (int(c_days) * total_pwh)
+                return (diff_hours >= total_hours)
+            else:
+                # for snooze feature
+                diff_time = relativedelta(parser.parse(p_current_time_utc), parser.parse(issue_created_at))
+                return (diff_time.days >= c_days)
 
         elif 'm' in time_constraint:
             months, _ = time_constraint.split('m')
@@ -872,14 +956,20 @@ class GitKanban(BaseScript):
 
         elif 'd' in time_constraint:
             days, _ = time_constraint.split('d')
-            # skip saturday and sunday
-            diff_days = int(np.busday_count(parser.parse(issue_created_at).date(), parser.parse(p_current_time_utc).date()))
-            return (diff_days >= int(days))
+            if people:
+                total_pwh, diff_hours = self.calculate_working_hours(issue_created_at, p_current_time_utc, people)
+                total_hours = (int(days) * total_pwh)
+                return (diff_hours >= total_hours)
+            else:
+                # for snooze feature
+                # skip saturday and sunday
+                diff_days = int(np.busday_count(parser.parse(issue_created_at).date(), parser.parse(p_current_time_utc).date()))
+                return (diff_days >= int(days))
 
         elif 'h' in time_constraint:
             c_hours, _ = time_constraint.split('h')
             if people:
-                diff_hours = self.calculate_working_hours(issue_created_at, p_current_time_utc, people)
+                _, diff_hours = self.calculate_working_hours(issue_created_at, p_current_time_utc, people)
                 return (diff_hours >= int(c_hours))
             else:
                 # for snooze feature
