@@ -33,7 +33,12 @@ class ListenHandler(tornado.web.RequestHandler):
 
         # handle the event/action by passing to corresponding functions
         event = json.loads(self.request.body.decode('utf8'))
-        action = event['action']
+
+        # TODO need to check if there is possiblity where we get information without action and useful for us
+        action = event.get('action', "")
+        if not action:
+            return
+
         event_name = self.request.headers['x-github-event']
 
         econf = self.event_filter_config
@@ -182,7 +187,7 @@ class ListenHandler(tornado.web.RequestHandler):
                               body=event['issue']['body'], state=event['issue']['state'],
                               closed_at=event['issue']['closed_at'], closed_by=None,
                               repository=repo_row, node_id=event['issue']['node_id'],
-                              id=event['issue']['id'])
+                              id=event['issue']['id'], url=event['issue']['html_url'])
             self.session.add(issue_row)
             self.session.commit()
 
@@ -226,8 +231,13 @@ class ListenHandler(tornado.web.RequestHandler):
         elif action == 'unassigned':
             issue_node = event['issue']['node_id']
             issue = self.session.query(Issue).filter_by(node_id=issue_node).first()
-            # change and commit all attributes
-            issue.assignees.remove(self.add_get_user(event['assignee']))
+            # change and commit all attributea
+            unassigned_user = self.add_get_user(event['assignee'])
+            try:
+                issue.assgnees.index(unassigned_user)
+                issue.assignees.remove(unassigned_user)
+            except ValueError:
+                pass
             self.session.commit()
 
         elif action == 'labeled':
@@ -236,7 +246,7 @@ class ListenHandler(tornado.web.RequestHandler):
             # change and commit all attributes
             for label in event['issue']['labels']:
                 issue.labels.append(self.add_get_label(label))
-                self.session.commit()
+            self.session.commit()
 
         elif action == 'unlabeled':
             issue_node = event['issue']['node_id']
@@ -348,6 +358,7 @@ class SyncCommand:
             Refer: https://docs.sqlalchemy.org/en/13/core/engines.html
             ''')
 
+        cmd.add_argument("--no-comments", default=False, type=bool, help="Do not sync comments")
         subcommands = cmd.add_subparsers()
 
         full_cmd = subcommands.add_parser('full',
@@ -416,7 +427,9 @@ class SyncCommand:
 
         # get issue from repo
         if all_issues:
-            issues = repo.get_issues()
+            # By default get_issues will take state as open not all
+            # Ref: https://developer.github.com/v3/issues/#parameters
+            issues = repo.get_issues(state='all')
         else:
             issues = repo.get_issues(state='open')
 
@@ -429,7 +442,7 @@ class SyncCommand:
                               body=issue.body, state=issue.state,
                               closed_at=issue.closed_at, closed_by=closed_by,
                               repository=repo_row, node_id=issue.raw_data['node_id'],
-                              id=issue.raw_data['id'])
+                              id=issue.raw_data['id'], url=issue.html_url)
             self.session.add(issue_row)
 
             # populate all Label rows from issue
@@ -440,7 +453,8 @@ class SyncCommand:
             self.append_issue_labels(issue_row, issue.labels)
 
             # add all IssueComment rows from issue
-            self.populate_issue_comments(issue, issue_row)
+            if not self.args.no_comments:
+                self.populate_issue_comments(issue, issue_row)
 
         # commit any changes in transaction buffer
         self.session.commit()

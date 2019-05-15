@@ -83,6 +83,7 @@ class Issue(BaseMixin, Base):
     number = Column(Integer)
     title = Column(Unicode(255))
     body = Column(Unicode)
+    url = Column(Unicode(255))
 
     state = Column(String(32))  # FIXME: enum?
     closed_at = DateTime()
