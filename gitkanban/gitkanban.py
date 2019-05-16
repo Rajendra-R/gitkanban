@@ -988,6 +988,7 @@ class GitKanban(BaseScript):
     def get_pr_recent_time(self, issue):
         pr_cm_co_dates = []
         pr_cm_co_urls = []
+        pr_cm_co_dates.append(issue['created_at'])
         pr_cm_co_urls.append(issue['commits_url'])
         pr_cm_co_urls.append(issue['comments_url'])
         for u in pr_cm_co_urls:
@@ -1030,7 +1031,7 @@ class GitKanban(BaseScript):
         #issue_updated_at = issue_data['updated_at']
         return issue_created_at
 
-    def check_constraint(self, constraint, issue, people, actual_q_name, check_alert_issues, needs_update_labels):
+    def check_constraint(self, constraint, issue, people, actual_q_name, needs_update_labels):
         time_constraint = constraint.get('time_since_creation', '') or \
                           constraint.get('time_since_activity', '') or \
                           constraint.get('time_since_labeled', '')
@@ -1051,10 +1052,7 @@ class GitKanban(BaseScript):
 
         # For pull request issues
         elif issue.get('commits_url', ''):
-            if check_alert_issues:
-                issue_created_at = self.get_pr_recent_time(issue)
-            else:
-                issue_created_at = self.get_last_comment_date(issue)
+            issue_created_at = self.get_pr_recent_time(issue)
 
         # For inbox issues
         elif not actual_q_name:
@@ -1366,7 +1364,7 @@ class GitKanban(BaseScript):
                         }
 
                         # check the constraint is pass/not
-                        if self.check_constraint(co, issue, people, actual_q_name, check_alert_issues, needs_update_labels):
+                        if self.check_constraint(co, issue, people, actual_q_name, needs_update_labels):
                             # check the person is in work_hours
                             if not self.check_person_is_in_work_hours(people):
                                 continue
@@ -1401,6 +1399,7 @@ class GitKanban(BaseScript):
                                 if check_alert_issues:
                                     peoples_list = [a['login'] for a in issue['assignees']]
 
+                                # update alert issue assignees
                                 self.send_alert_to_github(alert_repo, alert_msg, record, peoples_list, esc_people)
                                 # escalation logic
                                 last_alert_time = record['datetime']
@@ -1468,6 +1467,11 @@ class GitKanban(BaseScript):
                                                 if self.check_person_is_in_work_hours(_people):
                                                     self.send_escalation_to_alert_issue(alert_repo, f, record, pe_list, own_hi)
                                                     escalation_done = True
+
+                                            # stop if one person of escalation check is done
+                                            if escalation_done:
+                                                break
+
                                         # if escalation happend should not go further
                                         # if we got escalation people but not in work_hours/constraint is not true, break it.
                                         if escalation_done or pe_list:
